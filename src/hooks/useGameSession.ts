@@ -44,7 +44,7 @@ import {
   SessionEngine,
 } from "@/engine/factory";
 import { createId, describeError } from "@/lib/utils";
-import { isLocalDbAvailable } from "@/lib/db";
+import { isLocalDbAvailable, putSession } from "@/lib/db";
 import { createSyncQueueItem, dispatchMoveMutation, type FlushSummary } from "@/lib/sync";
 import { playCue, type SoundCue } from "@/lib/sound";
 
@@ -98,6 +98,11 @@ export interface UseGameSessionResult {
   readonly engine: SessionEngine;
   readonly board: UniversalBoard;
   readonly localSeat: PlayerColor;
+  /**
+   * The colour this client may move right now. Equal to `currentTurn` in a
+   * local hot-seat match, and equal to `localSeat` in a realtime match.
+   */
+  readonly activeSeat: PlayerColor;
   /** The seat whose turn it is, resolved from the session. */
   readonly currentTurn: PlayerColor;
   readonly selected: Coordinates | null;
@@ -201,26 +206,34 @@ export function useGameSession(
   const board = session?.boardSnapshot ?? engine.createInitialBoard();
   const currentTurn = session?.currentTurn ?? "black";
 
-  const canAct =
-    session !== null &&
-    canLocalPlayerAct(session, localSeat);
+  /**
+   * The colour this client may move right now. In a hot-seat local match that
+   * is simply whoever is on move; in a realtime match it is the seat the client
+   * holds, which is only playable on its own turn. Every hint the board renders
+   * is derived for this colour, so a highlighted square always belongs to the
+   * player who may actually claim it.
+   */
+  const activeSeat: PlayerColor =
+    session !== null && session.mode === "offline_local" ? session.currentTurn : localSeat;
+
+  const canAct = session !== null && canLocalPlayerAct(session, localSeat);
 
   const isLocked = session === null || !canAct;
 
   const selectableSquares = useMemo<ReadonlySet<string>>(() => {
     if (!session || isLocked) return new Set();
-    return toKeySet(engine.getSelectableSquares(board, localSeat));
-  }, [engine, board, localSeat, session, isLocked]);
+    return toKeySet(engine.getSelectableSquares(board, activeSeat));
+  }, [engine, board, activeSeat, session, isLocked]);
 
   const legalSquares = useMemo<ReadonlySet<string>>(() => {
     if (!session || isLocked) return new Set();
-    return toKeySet(engine.getLegalSquares(board, localSeat));
-  }, [engine, board, localSeat, session, isLocked]);
+    return toKeySet(engine.getLegalSquares(board, activeSeat));
+  }, [engine, board, activeSeat, session, isLocked]);
 
   const destinations = useMemo<ReadonlySet<string>>(() => {
     if (isLocked || !selected) return new Set();
-    return toKeySet(engine.getDestinations(board, selected, localSeat));
-  }, [engine, board, selected, localSeat, isLocked]);
+    return toKeySet(engine.getDestinations(board, selected, activeSeat));
+  }, [engine, board, selected, activeSeat, isLocked]);
 
   const lastMove = session?.history.length ? (session.history[session.history.length - 1] ?? null) : null;
 
@@ -264,7 +277,13 @@ export function useGameSession(
       setSession(next);
       sessionRef.current = next;
       optionsRef.current.onCommitted?.(next, record);
-      if (queueItem === null) return;
+      if (queueItem === null) {
+        // A local match still has to reach IndexedDB, or every move would be
+        // lost on reload and a resumed session would come back on a stale
+        // board. Only the outbound queue item is mode-dependent.
+        if (isLocalDbAvailable()) await putSession(next);
+        return;
+      }
       await dispatchMoveMutation(next, createSyncQueueItem(...queueItem));
     },
     []
@@ -296,7 +315,11 @@ export function useGameSession(
       if (active.status !== "active") {
         return reject("game-over", "This match is already finished.");
       }
-      if (active.currentTurn !== localSeat) {
+      // A local match is hot-seat: the one device plays both colours, so the
+      // seat that may act is whichever colour is on move. A realtime match
+      // keeps the single-seat rule, because the opponent is another client.
+      const mover: PlayerColor = active.mode === "offline_local" ? active.currentTurn : localSeat;
+      if (active.currentTurn !== mover) {
         return reject("not-your-turn", "It is your opponent's turn.");
       }
       if (active.mode === "online_realtime" && typeof navigator !== "undefined" && !navigator.onLine) {
@@ -304,23 +327,23 @@ export function useGameSession(
       }
 
       const currentEngine = getSessionEngine(active.gameKind);
-      const from = origin ?? resolveOrigin(currentEngine, active.boardSnapshot, coord, localSeat, selectedRef.current);
+      const from = origin ?? resolveOrigin(currentEngine, active.boardSnapshot, coord, mover, selectedRef.current);
       const move: NormalizedMove = { to: coord, ...(from ? { from } : {}) };
 
       let outcome: ReturnType<SessionEngine["applyMove"]>;
       try {
-        outcome = currentEngine.applyMove(active.boardSnapshot, move, localSeat);
+        outcome = currentEngine.applyMove(active.boardSnapshot, move, mover);
       } catch (error) {
         return reject("illegal-move", describeError(error, "That move is not allowed."));
       }
 
-      const nextPlayer = outcome.passesTurn ? localSeat : opponentOf(localSeat);
+      const nextPlayer = outcome.passesTurn ? mover : opponentOf(mover);
       const now = Date.now();
       const record: MoveRecord = {
         id: createId(),
         gameId: active.id,
         ply: active.turnNumber + 1,
-        player: localSeat,
+        player: mover,
         to: move.to,
         // `passesTurn` rides along in the payload: a reconnecting client
         // replays the move list alone and would otherwise have no way to
@@ -355,7 +378,10 @@ export function useGameSession(
       setRejection(null);
       setRejectionMessage(null);
 
-      const terminalCue = terminalCueFor(resolvedWinner, outcome.isDraw, localSeat);
+      // In a hot-seat match every move is the local player's move, so the win
+      // and loss cues belong to whoever just moved.
+      const cueSeat: PlayerColor = active.mode === "offline_local" ? mover : localSeat;
+      const terminalCue = terminalCueFor(resolvedWinner, outcome.isDraw, cueSeat);
       if (terminalCue) cue(terminalCue);
       else cue(outcome.passesTurn ? "sync" : "move");
 
@@ -380,7 +406,7 @@ export function useGameSession(
         accepted: true,
         reason: null,
         message: terminalCue
-          ? terminalMessage(resolvedWinner, localSeat)
+          ? terminalMessage(resolvedWinner, cueSeat)
           : outcome.passesTurn
             ? "The opponent has no move left, so the turn passes back to you."
             : `${currentEngine.formatMove(move)} — ${currentEngine.formatSquare(coord)}`,
@@ -501,6 +527,7 @@ export function useGameSession(
     engine,
     board,
     localSeat,
+    activeSeat,
     currentTurn,
     selected,
     selectableSquares,
@@ -597,7 +624,12 @@ export function verifyHistory(session: GameSession): {
   }
 
   try {
-    const replayed = replayMoves(session.boardSnapshot, session.history);
+    // The replay must start from the game's initial board, not from the stored
+    // snapshot. Replaying onto the snapshot would apply every move a second
+    // time on top of the position it is meant to reproduce, so the comparison
+    // could only ever succeed for an empty history.
+    const initial = getSessionEngine(session.gameKind).createInitialBoard();
+    const replayed = replayMoves(initial, session.history);
     const agrees = boardStatesEqual(replayed.board, session.boardSnapshot);
     return {
       ok: agrees,

@@ -371,7 +371,13 @@ export const SESSION_ENGINES: Readonly<Record<GameKind, SessionEngine>> = {
 };
 
 export function getSessionEngine(kind: GameKind): SessionEngine {
-  return SESSION_ENGINES[kind];
+  const engine = SESSION_ENGINES[kind];
+  // A silently undefined engine would surface later as an unrelated crash
+  // inside a rule file, so an unknown kind fails here, where the caller is.
+  if (!engine) {
+    throw new Error(`No rule engine is registered for game kind "${String(kind)}"`);
+  }
+  return engine;
 }
 
 /**

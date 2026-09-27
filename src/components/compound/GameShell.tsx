@@ -217,9 +217,16 @@ export function GameShell({
                 pieceCounts={counts}
                 detail={
                   status === "active"
-                    ? currentTurn === color
-                      ? "Your turn"
-                      : "Thinking…"
+                    ? // A local match is hot-seat: the other colour is played
+                      // from the same device, so "Thinking…" would describe a
+                      // person who is sitting right there.
+                      currentTurn === color
+                        ? mode === "offline_local"
+                          ? "To move"
+                          : "Your turn"
+                        : mode === "offline_local"
+                          ? "Waiting"
+                          : "Thinking…"
                     : undefined
                 }
               />

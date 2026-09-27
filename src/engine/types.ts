@@ -442,14 +442,23 @@ export function resolveLocalSeat(
   return null;
 }
 
-/** `true` when the local client may legally dispatch a move right now. */
+/**
+ * `true` when the local client may legally dispatch a move right now.
+ *
+ * Turn ownership only matters when the opponent is somewhere else. An
+ * `offline_local` match is hot-seat: both colours are played from the one
+ * device, so requiring the local seat to be the one on move would lock the
+ * board the moment the first move was made. Realtime sessions keep the strict
+ * check, because there the opponent is a different client.
+ */
 export function canLocalPlayerAct(
-  session: Pick<GameSession, "status" | "currentTurn" | "syncState">,
+  session: Pick<GameSession, "status" | "currentTurn" | "syncState" | "mode">,
   seat: PlayerColor | null
 ): boolean {
   if (seat === null) return false;
   if (session.syncState === "conflict") return false;
   if (!isPlayableStatus(session.status)) return false;
+  if (session.mode === "offline_local") return true;
   return session.currentTurn === seat;
 }
 
