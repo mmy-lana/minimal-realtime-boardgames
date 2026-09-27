@@ -3,11 +3,17 @@
 /**
  * Section 3.4 — Gomoku, 15x15.
  *
- * Stones sit on intersections, not in cells, so the grid is drawn as a CSS
- * background of hairlines and the hit targets are the same squares offset by
- * half a cell. At 360px a cell is roughly 22px, well under the 44px touch
- * guideline, so each stone sits inside an invisible padded hit area: the
- * visible board stays dense while the tappable region is a full grid cell.
+ * Stones sit on intersections, not in cells, so the visible grid is drawn as a
+ * background of hairlines *offset by half a cell* — that puts every line exactly
+ * where a stone is centred, which is what makes the board look like a go board
+ * rather than graph paper. Each cell is also a control, so the hit area is the
+ * whole cell and never the 22px square the stone itself occupies.
+ *
+ * Hit-testing maps a pointer to the nearest intersection before it is reported.
+ * Aiming at a line crossing and getting that crossing is what makes a 15x15
+ * board usable with a fingertip, and rounding to the nearest centre — rather
+ * than trusting whatever subpixel the browser reports — is what keeps the stone
+ * and the line it lands on together on a high-DPI screen.
  */
 
 import { useMemo, useRef, useState } from "react";
@@ -17,19 +23,19 @@ import { GOMOKU_SIZE } from "@/engine/rules/gomoku";
 import { cn, formatGridSquare } from "@/lib/utils";
 import { BoardTile } from "@/components/primitives/BoardTile";
 import type { BoardViewProps } from "./boardViewTypes";
-import { coordKey, isLastMove, lastMoveWash, SquareRole, squareRole, targetRing } from "./boardViewTypes";
-
-const STONE_RATIO = 0.78;
+import { coordKey, isLastMove, lastMoveWash, SquareRole, squareRole } from "./boardViewTypes";
 
 function Stone({ color }: { color: "black" | "white" }): React.ReactElement {
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "block rounded-full border shadow-[inset_0_-1px_2px_rgba(0,0,0,0.18)]",
-        color === "black" ? "border-board-dark bg-board-dark" : "border-board-light bg-board-light"
+        "block w-full rounded-full border shadow-md",
+        color === "black"
+          ? "border-neutral-900 bg-neutral-950"
+          : "border-neutral-400 bg-neutral-50"
       )}
-      style={{ width: `${STONE_RATIO * 100}%`, aspectRatio: "1 / 1" }}
+      style={{ aspectRatio: "1 / 1" }}
     />
   );
 }
@@ -64,12 +70,12 @@ export function GomokuBoardView({
     return map;
   }, [selected, legalSquares, selectableSquares, destinations, lastMove]);
 
-  const isTarget = (x: number, y: number): boolean => roles.get(`${x},${y}`) === "target";
-
   /**
-   * Maps a pointer event to the nearest intersection. Rounding to the nearest
-   * centre is what makes a 15x15 board usable with a fingertip: the player aims
-   * at a line crossing, not at a 22px square, and gets the intersection.
+   * Maps a pointer event to the nearest intersection.
+   *
+   * The `- 0.5` is what snaps cell *centres* to their own index: without it the
+   * line drawn at the centre of cell `n` would resolve to intersection `n - 1`,
+   * and every stone would appear one line off from the grid it was played on.
    */
   const coordFromEvent = (event: { clientX: number; clientY: number }): Coordinates | null => {
     const grid = gridRef.current;
@@ -94,40 +100,39 @@ export function GomokuBoardView({
       aria-rowcount={GOMOKU_SIZE}
       aria-colcount={GOMOKU_SIZE}
       aria-disabled={disabled || undefined}
-      className="relative inline-grid shrink-0 rounded-sm bg-board-light"
+      className="grid w-full gap-0 rounded-md border-2 border-neutral-800 bg-[#e3b866] p-1 shadow-md"
       style={{
         gridTemplateColumns: `repeat(${GOMOKU_SIZE}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${GOMOKU_SIZE}, minmax(0, 1fr))`,
-        // A single background draws every line at once. The two-tone gradient
-        // puts the wood-grain warmth on the odd lines and leaves the rest
-        // clean, which reads as a board rather than as graph paper.
+        // Two 1px lines per axis, tiled every cell and offset by half a cell so
+        // each line lands on an intersection rather than on a cell boundary.
+        // The outer half-cell on the right and bottom is closed by the frame.
         backgroundImage:
-          "linear-gradient(to right, var(--color-hairline) 1px, transparent 1px), linear-gradient(to bottom, var(--color-hairline) 1px, transparent 1px)",
+          "linear-gradient(to right, var(--color-neutral-800) 1px, transparent 1px), linear-gradient(to bottom, var(--color-neutral-800) 1px, transparent 1px)",
         backgroundSize: `${100 / GOMOKU_SIZE}% ${100 / GOMOKU_SIZE}%`,
-        backgroundPosition: "0 0",
-        border: "1px solid var(--color-board-muted)",
+        backgroundPosition: `${100 / (GOMOKU_SIZE * 2)}% ${100 / (GOMOKU_SIZE * 2)}%`,
       }}
     >
       {state.map((row, y) =>
         row.map((cell, x) => {
           const coord: Coordinates = { x, y };
-          const role = roles.get(coordKey(coord)) ?? "plain";
+          const key = coordKey(coord);
+          const role = roles.get(key) ?? "plain";
           const target = role === "target";
-          // The ghost only previews when the pointer is genuinely over the
-          // board, so it never implies a move the player is not making.
-          const showGhost =
-            !disabled && cell === null && target && (hovered?.x === x && hovered?.y === y);
+          const latest = isLastMove(lastMove, coord);
+          // The ghost only previews where the pointer genuinely is, so it never
+          // implies a move the player is not making.
+          const showGhost = !disabled && cell === null && target && hovered?.x === x && hovered?.y === y;
 
           return (
             <BoardTile
-              key={coordKey(coord)}
+              key={key}
               label={`${formatGridSquare(x, y, GOMOKU_SIZE)}${cell ? `, ${cell} stone` : ", empty"}`}
               size={size}
               shape="circle"
               disabled={disabled}
               selected={role === "selected"}
               isLegalTarget={target}
-              isLastMove={isLastMove(lastMove, coord)}
+              isLastMove={latest}
               onClick={(event) => {
                 const aimed = coordFromEvent(event);
                 onSquareActivate(aimed ?? coord);
@@ -139,14 +144,20 @@ export function GomokuBoardView({
                   current?.x === aimed?.x && current?.y === aimed?.y ? current : aimed
                 );
               }}
-              onPointerLeave={() => setHovered((current) => (current?.x === x && current.y === y ? null : current))}
+              onPointerLeave={() =>
+                setHovered((current) => (current?.x === x && current.y === y ? null : current))
+              }
               className={cn(
-                "aspect-square border-0 bg-transparent",
+                "border-0 bg-transparent",
+                // A stone is inset so it clears the crossing it sits on.
+                "p-[18%]",
+                "hover:bg-amber-600/20",
+                "disabled:hover:bg-transparent",
                 lastMoveWash(role),
-                // The intersection sits at the centre of the cell, so the stone
-                // is inset by half a cell rather than centred in it.
-                "p-[calc(50%-var(--gomoku-stone)/2)] [--gomoku-stone:0.78rem]",
-                targetRing(role)
+                selected && "bg-amber-500/25",
+                latest && "after:pointer-events-none after:absolute after:inset-[12%] after:rounded-full after:border after:border-emerald-600",
+                target &&
+                  "after:pointer-events-none after:absolute after:inset-[18%] after:rounded-full after:border-2 after:border-emerald-600"
               )}
             >
               {cell !== null ? (
@@ -154,8 +165,8 @@ export function GomokuBoardView({
               ) : showGhost ? (
                 <span
                   aria-hidden="true"
-                  className="block rounded-full border-2 border-dashed border-board-muted"
-                  style={{ width: `${STONE_RATIO * 100}%`, aspectRatio: "1 / 1" }}
+                  className="block w-full animate-pulse rounded-full border-2 border-dashed border-neutral-700"
+                  style={{ aspectRatio: "1 / 1" }}
                 />
               ) : null}
             </BoardTile>

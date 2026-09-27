@@ -35,10 +35,22 @@ export interface BoardTileProps
   children?: React.ReactNode;
 }
 
+/**
+ * Minimum edge length per preset. These are floors, not fixed sizes: a tile
+ * grows to fill its grid cell (`w-full` + `aspect-square`) and only refuses to
+ * shrink below the value here.
+ *
+ * The old values (`size-[22px]`, `size-8`, `size-11`) were *fixed*, so a board
+ * was exactly as big as its cell preset no matter how much room the layout had
+ * — which is what made a Chess board render as a postage stamp inside an
+ * unbounded viewport. Making the preset a floor instead means one board
+ * definition serves a 360px phone and a 4K display, and the floor still keeps a
+ * cell from collapsing below a usable tap size on a dense grid.
+ */
 const SIZE_CLASSES: Record<BoardTileSize, string> = {
-  sm: "size-[22px]",
-  md: "size-8",
-  lg: "size-11",
+  sm: "min-h-[22px]",
+  md: "min-h-8",
+  lg: "min-h-11",
 };
 
 const EMPHASIS_CLASSES: Record<BoardTileEmphasis, string> = {
@@ -100,13 +112,14 @@ export function BoardTile({
       }}
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center",
+        "w-full aspect-square",
         "select-none border",
         "transition-colors duration-75",
         shape === "circle" ? "rounded-full" : "rounded-none",
         SIZE_CLASSES[size],
         EMPHASIS_CLASSES[emphasis],
         "hover:bg-board-subtle/60",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-board-dark",
+        "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-board-dark",
         "disabled:cursor-not-allowed disabled:hover:bg-transparent",
         selected && "bg-board-subtle",
         isLastMove && "after:pointer-events-none after:absolute after:inset-0 after:border after:border-board-muted",

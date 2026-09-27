@@ -258,6 +258,121 @@ describe("useGameSession on a two-step game", () => {
     expect(result.current.session?.history).toHaveLength(0);
   });
 
+  it("never raises an engine error when a piece is simply lifted", async () => {
+    // The reported bug: clicking one of your own pieces showed a red banner
+    // reading "an origin square is required". Lifting a piece is not a move and
+    // not a mistake, so it must reach the session as a selection, not as a
+    // failed move the engine got to complain about.
+    const engine = getSessionEngine("checkers");
+    const initial = localSession({ gameKind: "checkers", boardSnapshot: engine.createInitialBoard() });
+    const { result } = renderHook(() => useGameSession(initial));
+
+    const originKey = [...result.current.selectableSquares][0] as string;
+    const [ox, oy] = originKey.split(",").map(Number);
+    await act(async () => {
+      await result.current.makeMove({ x: ox as number, y: oy as number });
+    });
+
+    expect(result.current.rejection).toBeNull();
+    expect(result.current.rejectionMessage).toBeNull();
+    expect(result.current.selected).toEqual({ x: ox, y: oy });
+    expect(result.current.session?.history).toHaveLength(0);
+  });
+
+  it("switches to another own piece rather than treating it as a move", async () => {
+    // Clicking a second checker of your own is a change of mind, not a move of
+    // the first one onto the second one's square. Handed to the engine that way
+    // it throws "destination is occupied" — a banner about a move the player
+    // never attempted.
+    const engine = getSessionEngine("checkers");
+    const initial = localSession({ gameKind: "checkers", boardSnapshot: engine.createInitialBoard() });
+    const { result } = renderHook(() => useGameSession(initial));
+
+    const keys = [...result.current.selectableSquares];
+    const first = keys[0] as string;
+    const second = keys[1] as string;
+    const coord = (key: string) => {
+      const [x, y] = key.split(",").map(Number);
+      return { x: x as number, y: y as number };
+    };
+
+    await act(async () => {
+      await result.current.makeMove(coord(first));
+    });
+    await act(async () => {
+      await result.current.makeMove(coord(second));
+    });
+
+    expect(result.current.rejection).toBeNull();
+    expect(result.current.selected).toEqual(coord(second));
+    expect(result.current.session?.history).toHaveLength(0);
+  });
+
+  it("puts the piece down when a lifted piece is clicked again", async () => {
+    const engine = getSessionEngine("checkers");
+    const initial = localSession({ gameKind: "checkers", boardSnapshot: engine.createInitialBoard() });
+    const { result } = renderHook(() => useGameSession(initial));
+
+    const originKey = [...result.current.selectableSquares][0] as string;
+    const [ox, oy] = originKey.split(",").map(Number);
+    const origin = { x: ox as number, y: oy as number };
+
+    await act(async () => {
+      await result.current.makeMove(origin);
+    });
+    expect(result.current.selected).toEqual(origin);
+
+    await act(async () => {
+      await result.current.makeMove(origin);
+    });
+    expect(result.current.selected).toBeNull();
+    expect(result.current.rejection).toBeNull();
+    expect(result.current.session?.history).toHaveLength(0);
+  });
+
+  it("drops the selection on empty space rather than reporting an illegal move", async () => {
+    // Clicking empty space to put a piece down is how these games are played.
+    // With nothing lifted and no piece under the finger there is no move to
+    // make, so the session must say so by doing nothing — not by raising an
+    // error the player cannot act on.
+    const engine = getSessionEngine("checkers");
+    const initial = localSession({ gameKind: "checkers", boardSnapshot: engine.createInitialBoard() });
+    const { result } = renderHook(() => useGameSession(initial));
+
+    const originKey = [...result.current.selectableSquares][0] as string;
+    const [ox, oy] = originKey.split(",").map(Number);
+    await act(async () => {
+      await result.current.makeMove({ x: ox as number, y: oy as number });
+    });
+
+    // A square well away from the lifted piece and off the board's edges.
+    await act(async () => {
+      await result.current.makeMove({ x: 7, y: 7 });
+    });
+
+    expect(result.current.selected).toBeNull();
+    // The banner is the symptom that was reported, so the assertion that
+    // matters is not just that nothing moved — it is that nothing complained.
+    expect(result.current.rejection).toBeNull();
+    expect(result.current.rejectionMessage).toBeNull();
+    expect(result.current.session?.history).toHaveLength(0);
+  });
+
+  it("still refuses a genuinely illegal move", async () => {
+    // The cases above must not have swallowed real errors: tapping a square
+    // that holds nothing of yours, with nothing lifted, is still not a move.
+    const engine = getSessionEngine("checkers");
+    const initial = localSession({ gameKind: "checkers", boardSnapshot: engine.createInitialBoard() });
+    const { result } = renderHook(() => useGameSession(initial));
+
+    await act(async () => {
+      await result.current.makeMove({ x: 7, y: 7 });
+    });
+
+    expect(result.current.session?.history).toHaveLength(0);
+    expect(result.current.rejection).not.toBeNull();
+  });
+
   it("plays Reversi in one click, because the engine supplies destinations", async () => {
     const engine = getSessionEngine("reversi");
     const initial = localSession({ gameKind: "reversi", boardSnapshot: engine.createInitialBoard() });

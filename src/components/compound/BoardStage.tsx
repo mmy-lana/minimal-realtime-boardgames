@@ -1,34 +1,35 @@
 "use client";
 
 /**
- * The board stage — the square, centred canvas every board renders inside.
+ * The board stage — the centred canvas every board renders inside.
  *
- * Its one non-obvious job is Gomoku's tap-intercept overlay. At 360px a 15x15
- * grid is about 22px per cell, which is below a usable touch target. Rather
- * than inflating the visible grid (which would overflow the phone), the stage
- * keeps the grid at its natural density and, when the board asks for it,
- * stretches an invisible layer over the whole square. The overlay is a real
- * element with real hit area, so the touch target becomes the full grid —
- * Section 5.1's "touch targets are decoupled using an invisible tap intercept
- * overlay" — while the player's finger still lands on whichever intersection
- * is nearest, because the board's own pointer maths rounds to the nearest
- * centre.
+ * Its one job is sizing, and it owns that job outright. Each board is a CSS
+ * grid whose tiles are `w-full aspect-square`, so a board's height falls out of
+ * its width and its column count: an 8x8 grid is square, Connect Four's 7x6 is
+ * 7:6. The stage therefore only has to decide how *wide* a board may get, and
+ * it decides that in one place so the six board definitions never have to carry
+ * viewport logic of their own.
  *
- * The overlay is `pointer-events` enabled and children are `pointer-events:
- * none`, so it never swallows a keyboard event: the grid underneath stays
- * focusable and tab order is unaffected.
+ * The cap is `min(92vw, 34rem)`. The `92vw` keeps a board off the viewport edge
+ * on a 360/390/430px phone; the `34rem` ceiling is what stops a desktop board
+ * from growing without bound, which is the other half of the bug this replaces
+ * — boards used to be pinned to a fixed cell size inside an unbounded column,
+ * so they rendered postage-stamp sized in the middle of a large screen.
+ *
+ * The old invisible tap-intercept overlay is gone. It became interactive on
+ * `pointerdown` and stayed that way until `pointerup`, so the click it was
+ * meant to enlarge landed on the overlay and the cell underneath never saw it
+ * — the first tap of a dense board was swallowed rather than enlarged. Boards
+ * now hit-test on the cell itself, which is the whole grid at full size.
  */
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { GameKind } from "@/engine/types";
 import { cn } from "@/lib/utils";
 import type { BoardCellSize } from "../boards/boardViewTypes";
 
 export type { BoardCellSize };
-
-/** Games whose grid is dense enough to need the enlarged tap area at 360px. */
-const DENSE_BOARDS: readonly GameKind[] = ["gomoku", "reversi"];
 
 export interface BoardStageProps {
   readonly gameKind: GameKind;
@@ -46,44 +47,16 @@ export function BoardStage({
   children,
   className,
 }: BoardStageProps): React.ReactElement {
-  const [isOverlayActive, setIsOverlayActive] = useState(false);
-  const needsTapIntercept = DENSE_BOARDS.includes(gameKind) && size === "sm";
-
   return (
     <div
+      data-board-stage={gameKind}
+      data-cell-size={size}
       className={cn(
-        "relative mx-auto flex aspect-square w-full items-center justify-center",
-        className
+        "mx-auto w-full max-w-[min(92vw,34rem)]",
+        className,
       )}
     >
-      {/* `overflow-visible` so a last-move ring on an edge cell is not clipped;
-          the padding is what keeps that ring inside the viewport instead. */}
-      <div
-        data-board-stage={gameKind}
-        data-cell-size={size}
-        className={cn(
-          "flex max-h-full max-w-full items-center justify-center p-1",
-          isDesktop && "rounded-lg border border-hairline bg-board-light p-3 shadow-sm"
-        )}
-      >
-        {children}
-      </div>
-
-      {needsTapIntercept ? (
-        <div
-          data-tap-intercept="true"
-          aria-hidden="true"
-          // The layer is always in the tree so hit-testing is stable; it only
-          // becomes interactive on touch, where a 22px cell is the problem.
-          className={cn(
-            "pointer-events-none absolute inset-0 rounded-sm",
-            isOverlayActive ? "pointer-events-auto" : "hidden"
-          )}
-          onPointerDown={() => setIsOverlayActive(true)}
-          onPointerUp={() => setIsOverlayActive(false)}
-          onPointerCancel={() => setIsOverlayActive(false)}
-        />
-      ) : null}
+      {children}
     </div>
   );
 }

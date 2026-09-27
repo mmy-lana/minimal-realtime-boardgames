@@ -7,6 +7,11 @@
  * dot matches the disc it will become, so the board previews the result of the
  * move instead of just marking the square. A filled disc on a legal square is
  * never possible, so the two states cannot be confused.
+ *
+ * The felt is dark green and the discs carry a light rim each, so black reads
+ * against the felt and white reads against its own shadow — the monochrome
+ * palette this board used to share with the rest of the product put both
+ * colours on a background of their own.
  */
 
 import { useMemo } from "react";
@@ -16,19 +21,19 @@ import { REVERSI_SIZE } from "@/engine/rules/reversi";
 import { cn } from "@/lib/utils";
 import { BoardTile } from "@/components/primitives/BoardTile";
 import type { BoardViewProps } from "./boardViewTypes";
-import { coordKey, isLastMove, lastMoveWash, SquareRole, squareRole, targetRing } from "./boardViewTypes";
-
-const DISC_RATIO = 0.76;
+import { coordKey, isLastMove, lastMoveWash, SquareRole, squareRole } from "./boardViewTypes";
 
 function Disc({ color }: { color: "black" | "white" }): React.ReactElement {
   return (
     <span
       aria-hidden="true"
       className={cn(
-        "block rounded-full border shadow-[inset_0_-1px_2px_rgba(0,0,0,0.22)]",
-        color === "black" ? "border-board-dark bg-board-dark" : "border-board-light bg-board-light"
+        "block w-full rounded-full border-2 shadow-md",
+        color === "black"
+          ? "border-neutral-600 bg-neutral-950"
+          : "border-neutral-300 bg-neutral-50"
       )}
-      style={{ width: `${DISC_RATIO * 100}%`, aspectRatio: "1 / 1" }}
+      style={{ aspectRatio: "1 / 1" }}
     />
   );
 }
@@ -68,21 +73,21 @@ export function ReversiBoardView({
       aria-rowcount={REVERSI_SIZE}
       aria-colcount={REVERSI_SIZE}
       aria-disabled={disabled || undefined}
-      className="inline-grid shrink-0 gap-px rounded-sm border border-hairline bg-hairline p-px"
+      className="grid w-full gap-1 rounded-lg border-2 border-emerald-950 bg-emerald-900 p-1.5 shadow-md sm:gap-1.5 sm:p-2"
       style={{
         gridTemplateColumns: `repeat(${REVERSI_SIZE}, minmax(0, 1fr))`,
-        gridTemplateRows: `repeat(${REVERSI_SIZE}, minmax(0, 1fr))`,
       }}
     >
       {state.map((row, y) =>
         row.map((cell, x) => {
           const coord: Coordinates = { x, y };
-          const role = roles.get(coordKey(coord)) ?? "plain";
+          const key = coordKey(coord);
+          const role = roles.get(key) ?? "plain";
           const target = role === "target";
 
           return (
             <BoardTile
-              key={coordKey(coord)}
+              key={key}
               label={`Column ${x + 1}, row ${y + 1}${cell ? `, ${cell} disc` : ", empty"}`}
               size={size}
               shape="circle"
@@ -92,9 +97,14 @@ export function ReversiBoardView({
               isLastMove={isLastMove(lastMove, coord)}
               onClick={() => onSquareActivate(coord)}
               className={cn(
-                "aspect-square border-0 bg-board-dark/5",
+                "rounded-full border-0",
+                "bg-emerald-800",
+                "hover:bg-emerald-700",
+                "disabled:hover:bg-emerald-800",
                 lastMoveWash(role),
-                targetRing(role)
+                selected && "bg-emerald-600",
+                isLastMove(lastMove, coord) && "ring-2 ring-amber-400",
+                target && "bg-emerald-600"
               )}
             >
               {cell !== null ? (
@@ -102,8 +112,8 @@ export function ReversiBoardView({
               ) : target && !disabled ? (
                 <span
                   aria-hidden="true"
-                  className="block rounded-full border-2 border-board-muted/60"
-                  style={{ width: `${DISC_RATIO * 100}%`, aspectRatio: "1 / 1" }}
+                  className="block w-[34%] animate-pulse rounded-full border-2 border-dashed border-emerald-200"
+                  style={{ aspectRatio: "1 / 1" }}
                 />
               ) : null}
             </BoardTile>

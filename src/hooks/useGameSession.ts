@@ -327,8 +327,44 @@ export function useGameSession(
       }
 
       const currentEngine = getSessionEngine(active.gameKind);
-      const from = origin ?? resolveOrigin(currentEngine, active.boardSnapshot, coord, mover, selectedRef.current);
-      const move: NormalizedMove = { to: coord, ...(from ? { from } : {}) };
+      // An explicit `origin` comes from a caller that already knows what it is
+      // doing (a drag that started on a piece, say), so intent resolution is
+      // skipped for it. Everything else has to work out the intent itself.
+      const intent: ClickIntent =
+        origin !== undefined
+          ? { kind: "move", from: origin }
+          : resolveClickIntent(
+              currentEngine,
+              active.boardSnapshot,
+              coord,
+              mover,
+              selectedRef.current
+            );
+
+      // Selecting a piece, switching which one is lifted, and putting the one
+      // down again are all ordinary parts of playing Checkers or Chess. None of
+      // them is a move, none of them is an error, and none of them should reach
+      // the engine — an engine that is handed a move with no origin throws
+      // "an origin square is required", which is how a routine tap ended up
+      // raising a red banner.
+      if (intent.kind === "select" || intent.kind === "deselect") {
+        setSelected(intent.kind === "select" ? intent.coord : null);
+        selectedRef.current = intent.kind === "select" ? intent.coord : null;
+        // Any earlier rejection is stale the moment the player touches the
+        // board again, so the banner clears instead of lingering.
+        setRejection(null);
+        setRejectionMessage(null);
+        return {
+          accepted: false,
+          reason: null,
+          message:
+            intent.kind === "select" ? "Piece lifted — now choose where it lands." : "Selection cleared.",
+        };
+      }
+
+      // Past the early return `intent` is the one shape left: a real move,
+      // carrying the origin only when the player picked a piece up first.
+      const move: NormalizedMove = { to: coord, ...(intent.from ? { from: intent.from } : {}) };
 
       let outcome: ReturnType<SessionEngine["applyMove"]>;
       try {
@@ -550,28 +586,56 @@ export function useGameSession(
 }
 
 /**
- * Decides whether a bare click picks up a piece or drops one. A click on a
- * square the player owns while one is already selected switches the selection
- * rather than consuming a move, which is what every one of these games needs
- * for tap-tap and drag-drop to feel the same.
+ * What a bare click on a square means.
+ *
+ * `select` and `deselect` are not moves and never reach the engine; `move` is
+ * the only outcome the engine ever sees from a bare click.
  */
-function resolveOrigin(
+type ClickIntent =
+  | { readonly kind: "move"; readonly from: Coordinates | null }
+  | { readonly kind: "select"; readonly coord: Coordinates }
+  | { readonly kind: "deselect" };
+
+/**
+ * Decides whether a bare click picks up a piece, puts one down, or moves one.
+ *
+ * The order below is the whole rule, and every branch exists because the
+ * alternative is an engine error the player did not cause:
+ *
+ *  1. A destination of the current selection wins outright. This is the move.
+ *  2. Otherwise, if the click is on one of the player's own movable pieces it
+ *     is a selection. With nothing lifted it lifts that piece; with something
+ *     already lifted it *switches* to the new piece rather than asking the
+ *     engine to move a piece onto itself.
+ *  3. Otherwise, if something is lifted, the click missed every destination, so
+ *     the selection is dropped. Clicking empty space to put a piece down is
+ *     how every one of these games is played, and treating it as an illegal
+ *     move was the "an origin square is required" banner.
+ *  4. Otherwise there is nothing to do. For a placement game this is an empty
+ *     square with no legal move; for a movement game it is a square holding
+ *     something the player does not own. Both are the engine's answer, not an
+ *     error the session layer invents.
+ */
+function resolveClickIntent(
   engine: SessionEngine,
   board: UniversalBoard,
   coord: Coordinates,
   player: PlayerColor,
   selected: Coordinates | null
-): Coordinates | null {
+): ClickIntent {
   if (selected) {
-    const moves = engine.getDestinations(board, selected, player);
-    if (moves.some((candidate) => coordinatesEqual(candidate, coord))) return selected;
-    // Not a valid destination: fall through and treat the click as a fresh
-    // selection attempt.
+    const destinations = engine.getDestinations(board, selected, player);
+    if (contains(destinations, coord)) return { kind: "move", from: selected };
   }
+
   if (engine.usesOriginSquare && contains(engine.getSelectableSquares(board, player), coord)) {
-    return coord;
+    // Clicking the piece that is already lifted puts it back down.
+    if (selected && coordinatesEqual(selected, coord)) return { kind: "deselect" };
+    return { kind: "select", coord };
   }
-  return null;
+
+  if (selected) return { kind: "deselect" };
+  return { kind: "move", from: null };
 }
 
 function contains(coords: readonly Coordinates[], coord: Coordinates): boolean {

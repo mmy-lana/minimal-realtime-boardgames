@@ -7,9 +7,8 @@
  *
  *   < 768px  `flex-col`. The board takes the full width and the side panel
  *            stacks directly underneath it. The board itself is capped at
- *            `max-w-[calc(100vw-2rem)]` so it never touches the viewport edge
- *            on a 360/390/430px phone, and because the cap is a square the
- *            board cannot overflow vertically either.
+ *            `min(92vw, 34rem)` so it never touches the viewport edge on a
+ *            360/390/430px phone.
  *   >= 768px `flex-row`. Board and rail are side by side, the history list is
  *            inline and capped at 480px of scroll, and the two player cards
  *            sit next to each other so a glance spans both seats.
@@ -18,12 +17,10 @@
  *            canvas with a column of context beside it.
  *
  * The board wrapper is the one place that knows the current cell size, and it
- * passes that down rather than letting each board guess. Gomoku is the case
- * that matters: at 360px a 15x15 grid is ~22px per cell, far under the 44px
- * touch guideline, so the shell wraps it in a full-bleed tap-intercept
- * overlay — an invisible layer the size of the whole grid that turns a finger
- * into an aimed intersection (see {@link BoardStage}). The visible grid keeps
- * its 22px density; only the input area is enlarged.
+ * passes that down rather than letting each board guess. Sizing the board is
+ * the wrapper's whole job now (see {@link BoardStage}): a board is a grid of
+ * `aspect-square` cells, so one width cap serves every game and every viewport
+ * instead of each board pinning itself to a fixed pixel cell size.
  */
 
 import { useEffect, useState, type ReactNode } from "react";
@@ -39,11 +36,73 @@ import {
 } from "@/engine/types";
 import { RealtimeConnectionState } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/primitives/Button";
+import { Modal } from "@/components/primitives/Modal";
 import { NetworkIndicator } from "@/components/primitives/NetworkIndicator";
 import { GameOverDialog, type GameOverReason } from "@/components/compound/GameOverDialog";
 import { MoveHistoryTimeline } from "@/components/compound/MoveHistoryTimeline";
 import { PlayerScoreCard } from "@/components/compound/PlayerScoreCard";
 import { BoardStage, type BoardCellSize } from "./BoardStage";
+
+/**
+ * Per-game rules, shown from the header.
+ *
+ * Two of these games are two-step (Checkers and Chess: pick a piece, then pick
+ * a destination) and nothing on screen says so. A player who clicks a checker
+ * and sees it sit still has no way to learn that the next click is the one
+ * that moves it, so the interaction model is stated here alongside the win
+ * condition.
+ */
+const GAME_RULES: Record<GameKind, { objective: string; steps: string[] }> = {
+  tictactoe: {
+    objective: "Line up three marks horizontally, vertically or diagonally.",
+    steps: [
+      "Player 1 plays Black (X); Player 2 plays White (O).",
+      "Click any empty square to place your mark.",
+      "The first player to complete a line of three wins.",
+    ],
+  },
+  connect4: {
+    objective: "Connect four discs in a row, column or diagonal.",
+    steps: [
+      "Click anywhere in a column to drop a disc into its lowest open slot.",
+      "Discs fall under gravity, so a column can only fill from the bottom.",
+      "The first player to form a line of four wins.",
+    ],
+  },
+  gomoku: {
+    objective: "Build an unbroken line of five stones.",
+    steps: [
+      "Click an intersection to place a stone. The ghost circle previews it.",
+      "Lines count horizontally, vertically and on both diagonals.",
+      "Exactly five or more stones in a row wins.",
+    ],
+  },
+  reversi: {
+    objective: "Finish with more discs than the opponent.",
+    steps: [
+      "Click a hollow marker: it brackets at least one of the opponent's discs.",
+      "Every disc trapped between your new piece and another of your own flips to your colour.",
+      "If you have no legal move your turn is skipped, not lost.",
+    ],
+  },
+  checkers: {
+    objective: "Capture every opponent piece, or block them from moving.",
+    steps: [
+      "Click one of your pieces to lift it, then click a highlighted square to land it. Both clicks are yours; the piece does not move on the first one.",
+      "Click a different piece of yours to switch which one is lifted.",
+      "Jump over an adjacent opponent piece into an empty square to capture it, and reaching the far edge crowns your piece as a King, which moves and captures backwards too.",
+    ],
+  },
+  chess: {
+    objective: "Checkmate the opponent's king.",
+    steps: [
+      "Click a piece to reveal every square it may legally reach, then click one of those squares to move.",
+      "Pawns move one square forward, or two on their first move, and capture diagonally. Knights jump.",
+      "You are in check when your king is attacked; you must answer the check on your next move.",
+    ],
+  },
+};
 
 export interface GameShellProps {
   readonly gameKind: GameKind;
@@ -114,6 +173,13 @@ export function GameShell({
   pieceCounts,
 }: GameShellProps): React.ReactElement {
   const metadata = getGameMetadata(gameKind);
+  const rules = GAME_RULES[gameKind];
+
+  // Two dialogs the header owns: the rules, and the confirmation that stands
+  // between a player and walking out of a live match.
+  const [showHelp, setShowHelp] = useState(false);
+  const [confirmExit, setConfirmExit] = useState(false);
+  const isLiveMatch = status === "active";
 
   // The shell owns the responsive decision rather than letting CSS and JS
   // disagree: CSS handles the flex direction, and this handles cell size and
@@ -141,34 +207,57 @@ export function GameShell({
 
   return (
     <div className="flex min-h-dvh flex-col bg-board-light text-board-dark">
-      {/* Top bar: identity on the left, connection truth on the right. */}
-      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-hairline bg-board-light/95 px-4 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-board-light/80">
+      {/* Top bar: the way out and the way to the rules on the left, identity in
+          the middle, connection truth on the right. */}
+      <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-hairline bg-board-light/95 px-3 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-board-light/80 sm:px-4">
+        <button
+          type="button"
+          onClick={() => (isLiveMatch ? setConfirmExit(true) : onBackToLobby())}
+          aria-label="Back to games"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-hairline px-2 py-1.5 text-xs font-medium text-board-dark transition-colors hover:bg-board-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-board-dark"
+        >
+          <span aria-hidden="true">&larr;</span>
+          <span className="hidden sm:inline">Games</span>
+        </button>
+
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold leading-tight sm:text-base">
             {metadata.name}
           </h1>
           <p className="truncate text-xs text-board-muted">
-            {metadata.gridLabel} · {roomId ? `Room ${roomId.slice(0, 8)}` : "Local match"}
+            {mode === "offline_local"
+              ? `${metadata.gridLabel} · Pass & play`
+              : `${metadata.gridLabel} · ${roomId ? `Room ${roomId.slice(0, 8)}` : "Realtime match"}`}
           </p>
         </div>
 
-        {isSharedLink && onCopyLink ? (
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={onCopyLink}
-            className="hidden shrink-0 rounded-md border border-hairline px-2.5 py-1.5 text-xs font-medium text-board-dark underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-board-dark sm:inline-flex"
+            onClick={() => setShowHelp(true)}
+            className="rounded-md border border-hairline px-2 py-1.5 text-xs font-medium text-board-dark transition-colors hover:bg-board-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-board-dark"
           >
-            Copy invite link
+            How to play
           </button>
-        ) : null}
 
-        <NetworkIndicator
-          connection={connection}
-          isOnline={isOnline}
-          pendingCount={pendingCount}
-          syncState={syncState}
-          className="shrink-0"
-        />
+          {isSharedLink && onCopyLink ? (
+            <button
+              type="button"
+              onClick={onCopyLink}
+              className="hidden rounded-md border border-hairline px-2.5 py-1.5 text-xs font-medium text-board-dark transition-colors hover:bg-board-subtle focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-board-dark sm:inline-flex"
+            >
+              Copy link
+            </button>
+          ) : null}
+
+          <NetworkIndicator
+            connection={connection}
+            isOnline={isOnline}
+            pendingCount={pendingCount}
+            syncState={syncState}
+            className="shrink-0"
+          />
+        </div>
       </header>
 
       {/* Section 3.1: `flex-col` below md, `flex-row` at md and up. */}
@@ -176,12 +265,7 @@ export function GameShell({
         <div className="flex min-w-0 flex-col items-center gap-3 md:flex-1">
           {boardHeader}
 
-          <BoardStage
-            gameKind={gameKind}
-            size={cellSize}
-            isDesktop={isDesktop}
-            className="w-full max-w-[calc(100vw-2rem)] md:max-w-[min(100%,42rem)]"
-          >
+          <BoardStage gameKind={gameKind} size={cellSize} isDesktop={isDesktop}>
             {board}
           </BoardStage>
 
@@ -243,6 +327,64 @@ export function GameShell({
           />
         </aside>
       </main>
+
+      <Modal
+        open={showHelp}
+        onClose={() => setShowHelp(false)}
+        title={`How to play ${metadata.name}`}
+        description={rules.objective}
+        panelClassName="max-w-md"
+        footer={
+          <Button variant="primary" onClick={() => setShowHelp(false)}>
+            Got it
+          </Button>
+        }
+      >
+        <ol className="space-y-3">
+          {rules.steps.map((step, index) => (
+            <li key={step} className="flex gap-3 text-sm leading-relaxed text-board-dark/85">
+              <span
+                aria-hidden="true"
+                className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-board-subtle font-mono text-[11px] font-semibold text-board-dark"
+              >
+                {index + 1}
+              </span>
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+      </Modal>
+
+      {/* Leaving a live match is the one navigation that can cost a player the
+          game, so it asks first. A finished match exits straight away — the
+          dialog is still on screen offering exactly this. */}
+      <Modal
+        open={confirmExit}
+        onClose={() => setConfirmExit(false)}
+        title="Leave this match?"
+        description={
+          mode === "offline_local"
+            ? "The position is saved on this device, so you can pick it up from the games list again."
+            : "Your opponent keeps the match open until it times out, and anything you have already played stays on the board."
+        }
+        panelClassName="max-w-sm"
+        footer={
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmExit(false)}>
+              Keep playing
+            </Button>
+            <Button variant="primary" onClick={onBackToLobby}>
+              Leave match
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-board-dark/80">
+          {mode === "offline_local"
+            ? "This is not a loss and nothing is scored — you can come back to it."
+            : "Nothing is scored by leaving, but the match stays paused for you."}
+        </p>
+      </Modal>
 
       <GameOverDialog
         outcome={outcome}

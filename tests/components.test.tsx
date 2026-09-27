@@ -1,7 +1,9 @@
 /**
  * @vitest-environment jsdom
  */
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -363,5 +365,79 @@ describe("NetworkIndicator", () => {
     // The dot is decorative, but the sentence behind it still has to reach the
     // screen reader, so the component keeps an `sr-only` detail regardless.
     expect(container.querySelector(".sr-only")?.textContent?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("hydrates without a mismatch, whatever the server could not have known", () => {
+    // The real regression: this component's answer depends on `navigator.onLine`
+    // and on a channel that only exists in the browser, so the server renders
+    // it without knowing the answer. If the first client render resolved that
+    // answer eagerly, React would find markup it did not produce and throw the
+    // tree away — which is what "Error in screenshot" was.
+    //
+    // `renderToString` stands in for the server render and `hydrateRoot` for
+    // the client one, so this is the actual hydration path rather than a
+    // render that happens to look similar.
+    const serverMarkup = renderToString(
+      <NetworkIndicator
+        connection="connected"
+        isOnline={false}
+        pendingCount={3}
+        syncState="pending_upload"
+        showLabel
+      />
+    );
+
+    const container = document.createElement("div");
+    container.innerHTML = serverMarkup;
+    document.body.appendChild(container);
+
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args);
+    };
+
+    let root: ReturnType<typeof hydrateRoot> | null = null;
+    try {
+      act(() => {
+        root = hydrateRoot(
+          container,
+          <NetworkIndicator
+            connection="connected"
+            isOnline={false}
+            pendingCount={3}
+            syncState="pending_upload"
+            showLabel
+          />
+        );
+      });
+    } finally {
+      console.error = originalError;
+    }
+
+    const hydrationFailures = errors.filter((args) =>
+      String(args[0]).includes("did not match") ||
+      String(args[0]).includes("Hydration")
+    );
+    expect(hydrationFailures).toEqual([]);
+
+    // The placeholder the server emitted must not have claimed a status it
+    // could not know, and the effect must have replaced it with the truth.
+    expect(serverMarkup).not.toContain("Offline");
+    expect(screen.getByText("Offline · 3 queued")).toBeDefined();
+
+    act(() => root?.unmount());
+    container.remove();
+  });
+
+  it("keeps the server markup free of a client-only answer", () => {
+    // Belt and braces for the same defect: the rendered `title` and label have
+    // to be identical on both sides of hydration, which means neither may be
+    // derived from `navigator.onLine` before the first effect runs.
+    const markup = renderToString(
+      <NetworkIndicator connection="connected" isOnline pendingCount={0} syncState="synced" showLabel />
+    );
+    expect(markup).toContain("Checking…");
+    expect(markup).not.toContain("Live");
   });
 });
