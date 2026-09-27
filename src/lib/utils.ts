@@ -122,6 +122,17 @@ export function formatSquare(x: number, y: number): string {
   return `${file}${rank >= 1 ? rank : 0}`;
 }
 
+/**
+ * Generalised grid notation for boards that are not 8x8, used by Tic-Tac-Toe,
+ * Gomoku, Reversi and Checkers. Files run `A`..`Z` left to right and ranks
+ * count up from the bottom row, so `formatGridSquare(1, 0, 15)` -> `"B15"`.
+ */
+export function formatGridSquare(x: number, y: number, size: number): string {
+  const file = x >= 0 && x < 26 ? String.fromCharCode(65 + x) : String(x);
+  const rank = size - y;
+  return `${file}${rank >= 1 ? rank : 0}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Time                                                                       */
 /* -------------------------------------------------------------------------- */

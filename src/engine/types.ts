@@ -336,6 +336,55 @@ export interface MoveRecord {
   timestamp: number;
 }
 
+/**
+ * Semantic content carried by {@link MoveRecord.payload}.
+ *
+ * `notation` is the human-readable label shown in the history timeline.
+ * `passesTurn` exists because Reversi can leave a player with no legal move —
+ * that ply is still recorded, but the mover keeps the turn. The turn hand-off
+ * has to survive the round trip through the `game_moves.payload` column, since
+ * a reconnecting client replays from rows alone and never sees the RPC's
+ * arguments.
+ */
+export interface MovePayload {
+  notation: string;
+  passesTurn: boolean;
+}
+
+const MOVE_PAYLOAD_PASS_SUFFIX = "|pass";
+
+/**
+ * Encodes a {@link MovePayload} for storage in the `payload` text column.
+ *
+ * The encoding is human-readable on purpose: a room's move log stays legible
+ * when inspected with a plain SQL client.
+ */
+export function encodeMovePayload(payload: MovePayload): string {
+  return payload.passesTurn
+    ? `${payload.notation}${MOVE_PAYLOAD_PASS_SUFFIX}`
+    : payload.notation;
+}
+
+/**
+ * Decodes a {@link MoveRecord.payload} written by {@link encodeMovePayload}.
+ *
+ * A missing, empty or foreign payload decodes to a safe default rather than
+ * throwing: a row written before this convention existed still replays, it
+ * simply hands the turn over as normal.
+ */
+export function decodeMovePayload(raw: string | null | undefined): MovePayload {
+  if (typeof raw !== "string" || raw.length === 0) {
+    return { notation: "", passesTurn: false };
+  }
+  if (raw.endsWith(MOVE_PAYLOAD_PASS_SUFFIX)) {
+    return {
+      notation: raw.slice(0, -MOVE_PAYLOAD_PASS_SUFFIX.length),
+      passesTurn: true,
+    };
+  }
+  return { notation: raw, passesTurn: false };
+}
+
 export interface GameSession {
   id: string;
   gameKind: GameKind;
@@ -402,6 +451,60 @@ export function canLocalPlayerAct(
   if (session.syncState === "conflict") return false;
   if (!isPlayableStatus(session.status)) return false;
   return session.currentTurn === seat;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Board equality (replay verification)                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Structural comparison of two arbitrary JSON-shaped values.
+ *
+ * Used exclusively to answer "did re-executing the move history reproduce the
+ * board the server broadcast?". Key order is irrelevant, so a JSONB round trip
+ * through Postgres cannot cause a false divergence.
+ */
+function jsonEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  if (typeof a !== typeof b) return false;
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let index = 0; index < a.length; index += 1) {
+      if (!jsonEquals(a[index], b[index])) return false;
+    }
+    return true;
+  }
+
+  if (typeof a === "object") {
+    const aRecord = a as Record<string, unknown>;
+    const bRecord = b as Record<string, unknown>;
+    const aKeys = Object.keys(aRecord);
+    const bKeys = Object.keys(bRecord);
+    if (aKeys.length !== bKeys.length) return false;
+    for (const key of aKeys) {
+      if (!Object.prototype.hasOwnProperty.call(bRecord, key)) return false;
+      if (!jsonEquals(aRecord[key], bRecord[key])) return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Compares two board snapshots of the same kind for exact structural equality.
+ *
+ * Different kinds are never equal, even if their raw structures happened to
+ * line up. This is the primitive behind Phase 4.4's integrity gate: a client
+ * replays the authoritative move log and compares the result against the
+ * broadcast `board_snapshot`; any difference halts play.
+ */
+export function boardStatesEqual(a: UniversalBoard, b: UniversalBoard): boolean {
+  if (a.kind !== b.kind) return false;
+  return jsonEquals(a.state, b.state);
 }
 
 /* -------------------------------------------------------------------------- */
