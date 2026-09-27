@@ -18,13 +18,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type {
-  GameSession,
-  MoveRecord,
-  PlayerColor,
-  SyncQueueAction,
-  SyncQueueItem,
-} from "@/engine/types";
+import { decodeMovePayload, type GameSession, type MoveRecord, type PlayerColor } from "@/engine/types";
+import type { SyncQueueAction, SyncQueueItem } from "@/engine/types";
 
 import { getLocalDb, isLocalDbAvailable } from "./db";
 import { getSupabaseClient, getSupabaseConfigError } from "./supabase";
@@ -448,6 +443,9 @@ async function runMoveItem(
     p_board_snapshot: session.boardSnapshot,
     p_winner: session.winner,
     p_status: session.status,
+    // A Reversi pass leaves the mover on the move; the server has to know that
+    // or it would hand the turn over and the room would deadlock.
+    p_passes_turn: decodeMovePayload(move.payload).passesTurn,
   });
 
   if (error) throw error;

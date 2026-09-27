@@ -131,7 +131,11 @@ create or replace function public.submit_turn_move(
   p_payload text,
   p_board_snapshot jsonb,
   p_winner public.player_color,
-  p_status public.match_status
+  p_status public.match_status,
+  -- Reversi can leave a player with no legal move. That ply is still recorded,
+  -- but the mover keeps the turn, so the hand-off has to be suppressible here
+  -- rather than assumed from p_player.
+  p_passes_turn boolean default false
 )
 returns text
 language plpgsql
@@ -186,7 +190,11 @@ begin
   update public.game_rooms
   set
     board_snapshot = p_board_snapshot,
-    current_turn = case when p_status = 'active' then v_next_turn else v_room.current_turn end,
+    current_turn = case
+      when p_status <> 'active' then v_room.current_turn
+      when coalesce(p_passes_turn, false) then v_room.current_turn
+      else v_next_turn
+    end,
     turn_number = v_room.turn_number + 1,
     status = p_status,
     winner = p_winner,
