@@ -568,7 +568,7 @@ describe("GameOverDialog", () => {
     render(
       <GameOverDialog
         outcome={{ kind: "conflict", detail: "divergent" }}
-        gameKind="chess"
+        gameKind="hex"
         mode="online_realtime"
         localSeat="black"
         onRevalidate={() => {}}
@@ -612,14 +612,14 @@ describe("BoardTile target markers", () => {
 
   it("keeps a view's marker honest by refusing one that would resize the tile", async () => {
     // The same hazard seen from the other end: a real board view is checked
-    // against the same rule, so a marker added in Reversi or Chess cannot
+    // against the same rule, so a marker added in Reversi or Hex cannot
     // quietly start taking a pixel from its neighbours.
     const { ReversiBoardView } = await import("@/components/boards/ReversiBoardView");
-    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
     const boxModel = /^(border|w-|h-|size-|min-w-|min-h-|max-w-|max-h-|p|px|py|m|gap)-?/;
     for (const [name, kind, View] of [
       ["Reversi", "reversi", ReversiBoardView],
-      ["Chess", "chess", ChessBoardView],
+      ["Hex", "hex", HexBoardView],
     ] as const) {
       const { container, unmount } = render(
         <View

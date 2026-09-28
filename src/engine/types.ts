@@ -18,7 +18,7 @@ export type GameKind =
   | "gomoku"
   | "reversi"
   | "checkers"
-  | "chess";
+  | "hex";
 
 export type SessionMode = "offline_local" | "online_realtime";
 
@@ -41,7 +41,7 @@ export const GAME_KINDS: readonly GameKind[] = [
   "gomoku",
   "reversi",
   "checkers",
-  "chess",
+  "hex",
 ] as const;
 
 export const SESSION_MODES: readonly SessionMode[] = [
@@ -195,14 +195,17 @@ export interface CheckersPiece {
 export type CheckersCell = CheckersPiece | null;
 export type CheckersBoard = CheckersCell[][];
 
-export type ChessPieceType = "p" | "n" | "b" | "r" | "q" | "k";
-export interface ChessPiece {
-  color: PlayerColor;
-  type: ChessPieceType;
-  hasMoved?: boolean;
-}
-export type ChessCell = ChessPiece | null;
-export type ChessBoard = ChessCell[][];
+/**
+ * One cell of a Hex board.
+ *
+ * A cell is the stone's colour or nothing — Hex has no piece types, so unlike
+ * Checkers a cell is a bare `PlayerColor` rather than an object. That is what
+ * makes the JSONB snapshot for a 7x7 board small enough to read at a glance and
+ * cheap to compare, and it is why `boardStatesEqual` can compare two Hex
+ * positions structurally without a per-cell comparator.
+ */
+export type HexCell = PlayerColor | null;
+export type HexBoard = HexCell[][];
 
 /**
  * Lookup table used for board-state extraction.
@@ -219,7 +222,7 @@ export interface BoardStateByKind {
   gomoku: GomokuBoard;
   reversi: ReversiBoard;
   checkers: CheckersBoard;
-  chess: ChessBoard;
+  hex: HexBoard;
 }
 
 export type BoardStateFor<K extends GameKind> = BoardStateByKind[K];
@@ -236,7 +239,7 @@ export type UniversalBoard =
   | { kind: "gomoku"; state: GomokuBoard }
   | { kind: "reversi"; state: ReversiBoard }
   | { kind: "checkers"; state: CheckersBoard }
-  | { kind: "chess"; state: ChessBoard };
+  | { kind: "hex"; state: HexBoard };
 
 /**
  * Discriminates a snapshot by kind.
@@ -578,14 +581,14 @@ export const GAME_METADATA: Readonly<Record<GameKind, GameMetadata>> = {
     description: "Capture by jumping; reach the far rank to be crowned.",
     dimensions: { rows: 8, columns: 8 },
   },
-  chess: {
-    kind: "chess",
-    name: "Chess",
-    shortName: "CHS",
-    gridLabel: "8 x 8",
+  hex: {
+    kind: "hex",
+    name: "Hex",
+    shortName: "HEX",
+    gridLabel: "7 x 7",
     players: 2,
-    description: "Classic chess movement on a standard 8x8 board.",
-    dimensions: { rows: 8, columns: 8 },
+    description: "Connect opposite sides of the hexagonal grid with an unbroken chain.",
+    dimensions: { rows: 7, columns: 7 },
   },
 };
 

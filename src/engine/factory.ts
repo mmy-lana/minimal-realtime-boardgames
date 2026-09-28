@@ -19,7 +19,7 @@
  * | gomoku      | —                 | intersection               |
  * | reversi     | —                 | intersection               |
  * | checkers    | origin square     | destination (jump implied) |
- * | chess       | origin square     | destination                |
+ * | hex         | —                 | target cell                |
  *
  * Checkers' `jumpedCoord` is not stored because it is fully derivable from the
  * endpoints via `deriveJumpedCoord` — which is exactly what Section 4.4
@@ -72,12 +72,11 @@ import {
   getCheckersMovesFrom,
 } from "./rules/checkers";
 import {
-  applyChessMove,
-  CHESS_SIZE,
-  createInitialChessBoard,
-  getChessRawMoves,
-  getChessSelectableSquares,
-} from "./rules/chess";
+  applyHexMove,
+  createInitialHexBoard,
+  getHexLegalMoves,
+  HEX_SIZE,
+} from "./rules/hex";
 
 /**
  * The single move representation persisted in `MoveRecord` and in the
@@ -119,7 +118,7 @@ export interface SessionEngine {
 
   /**
    * Squares the player may move *from*. Non-empty only for movement games
-   * (Checkers, Chess); a tap on one of these starts a selection.
+   * (Checkers); a tap on one of these starts a selection.
    */
   getSelectableSquares(board: UniversalBoard, player: PlayerColor): readonly Coordinates[];
 
@@ -325,39 +324,39 @@ const checkersEngine: SessionEngine = {
   formatSquare: (coord) => formatGridSquare(coord.x, coord.y, CHECKERS_SIZE),
 };
 
-const chessEngine: SessionEngine = {
-  kind: "chess",
-  usesOriginSquare: true,
+const hexEngine: SessionEngine = {
+  kind: "hex",
+  usesOriginSquare: false,
 
-  createInitialBoard: () => ({ kind: "chess", state: createInitialChessBoard() }),
+  createInitialBoard: () => ({ kind: "hex", state: createInitialHexBoard() }),
 
-  getSelectableSquares: (board, player) =>
-    getChessSelectableSquares(assertBoardSnapshot(board, "chess").state, player),
+  // A Hex move has no origin: tapping any empty cell is the whole move, so the
+  // legal set is reported directly and there is nothing to select first. This is
+  // what makes every empty cell a valid target ring on the board view.
+  getSelectableSquares: () => [],
 
-  getLegalSquares: () => [],
+  getLegalSquares: (board) => getHexLegalMoves(assertBoardSnapshot(board, "hex").state),
 
-  getDestinations: (board, from, player) =>
-    getChessRawMoves(assertBoardSnapshot(board, "chess").state, from, player),
+  getDestinations: () => [],
 
   applyMove: (board, move, player) => {
-    const state = assertBoardSnapshot(board, "chess").state;
-    if (!move.from) {
-      throw new Error("Invalid chess move: an origin square is required");
-    }
-    const result = applyChessMove(state, move.from, move.to, player);
+    const state = assertBoardSnapshot(board, "hex").state;
+    const result = applyHexMove(state, move.to, player);
     return {
-      board: { kind: "chess", state: result.nextBoard },
+      board: { kind: "hex", state: result.nextBoard },
       winner: result.winner,
+      // Hex is decided by the Hex theorem, so a room can never reach a tie and
+      // the status ladder below never has to represent one for this kind.
       isDraw: result.isDraw,
       passesTurn: false,
     };
   },
 
-  formatMove: (move) =>
-    move.from
-      ? `${formatSquare(move.from.x, move.from.y)}-${formatSquare(move.to.x, move.to.y)}`
-      : formatSquare(move.to.x, move.to.y),
-  formatSquare: (coord) => formatSquare(coord.x, coord.y),
+  // `formatGridSquare` gives Hex its conventional notation directly: files
+  // `A`..`G` across, rows `1`..`7` down, so D4 reads exactly as it does on a
+  // printed board.
+  formatMove: (move) => formatGridSquare(move.to.x, move.to.y, HEX_SIZE),
+  formatSquare: (coord) => formatGridSquare(coord.x, coord.y, HEX_SIZE),
 };
 
 /** Every engine, keyed by kind. Insertion order is irrelevant; lookups are. */
@@ -367,7 +366,7 @@ export const SESSION_ENGINES: Readonly<Record<GameKind, SessionEngine>> = {
   gomoku: gomokuEngine,
   reversi: reversiEngine,
   checkers: checkersEngine,
-  chess: chessEngine,
+  hex: hexEngine,
 };
 
 export function getSessionEngine(kind: GameKind): SessionEngine {

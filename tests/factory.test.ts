@@ -153,7 +153,7 @@ describe("status and seat helpers", () => {
 
   it("only lets the seat whose turn it is act in a realtime match", () => {
     const session = {
-      ...sessionFor("chess"),
+      ...sessionFor("hex"),
       mode: "online_realtime" as const,
       currentTurn: "black" as PlayerColor,
     };
@@ -162,22 +162,22 @@ describe("status and seat helpers", () => {
   });
 
   it("lets either colour act in a local match, because both share the device", () => {
-    const session = { ...sessionFor("chess"), currentTurn: "white" as PlayerColor };
+    const session = { ...sessionFor("hex"), currentTurn: "white" as PlayerColor };
     expect(session.mode).toBe("offline_local");
     expect(canLocalPlayerAct(session, "black")).toBe(true);
   });
 
   it("refuses a read-only observer that holds no seat", () => {
-    expect(canLocalPlayerAct(sessionFor("chess"), null)).toBe(false);
+    expect(canLocalPlayerAct(sessionFor("hex"), null)).toBe(false);
   });
 
   it("refuses any seat once the match is finished", () => {
-    const session = { ...sessionFor("chess"), status: "draw" as const };
+    const session = { ...sessionFor("hex"), status: "draw" as const };
     expect(canLocalPlayerAct(session, "black")).toBe(false);
   });
 
   it("refuses every seat once the session has a sync conflict", () => {
-    const session = { ...sessionFor("chess"), syncState: "conflict" as const };
+    const session = { ...sessionFor("hex"), syncState: "conflict" as const };
     expect(canLocalPlayerAct(session, "black")).toBe(false);
     expect(canLocalPlayerAct(session, "white")).toBe(false);
   });

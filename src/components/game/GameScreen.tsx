@@ -43,7 +43,7 @@ import { ConnectFourBoardView } from "@/components/boards/ConnectFourBoardView";
 import { GomokuBoardView } from "@/components/boards/GomokuBoardView";
 import { ReversiBoardView } from "@/components/boards/ReversiBoardView";
 import { CheckersBoardView } from "@/components/boards/CheckersBoardView";
-import { ChessBoardView } from "@/components/boards/ChessBoardView";
+import { HexBoardView } from "@/components/boards/HexBoardView";
 
 export interface GameScreenProps {
   readonly gameKind: GameKind;
@@ -72,7 +72,7 @@ export interface GameScreenProps {
 }
 
 /** Games whose board carries a material tally worth showing in the rail. */
-const COUNTED_BOARDS: readonly GameKind[] = ["reversi", "checkers", "chess"];
+const COUNTED_BOARDS: readonly GameKind[] = ["reversi", "checkers", "hex"];
 
 function tallyColor(cell: unknown): PlayerColor | null {
   if (cell === "black" || cell === "white") return cell;
@@ -232,8 +232,8 @@ export function GameScreen({
         return <ReversiBoardView {...shared} />;
       case "checkers":
         return <CheckersBoardView {...shared} />;
-      case "chess":
-        return <ChessBoardView {...shared} />;
+      case "hex":
+        return <HexBoardView {...shared} />;
     }
   }, [
     board,

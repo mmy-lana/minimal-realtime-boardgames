@@ -32,7 +32,7 @@ const BOARD_VIEWS: ReadonlyArray<readonly [GameKind, () => Promise<unknown>]> = 
   ["gomoku", async () => (await import("@/components/boards/GomokuBoardView")).GomokuBoardView],
   ["reversi", async () => (await import("@/components/boards/ReversiBoardView")).ReversiBoardView],
   ["checkers", async () => (await import("@/components/boards/CheckersBoardView")).CheckersBoardView],
-  ["chess", async () => (await import("@/components/boards/ChessBoardView")).ChessBoardView],
+  ["hex", async () => (await import("@/components/boards/HexBoardView")).HexBoardView],
 ];
 
 afterEach(cleanup);
@@ -613,9 +613,10 @@ describe("board sizing", () => {
     // Two boards deliberately mark nothing in advance. Gomoku has 225 legal
     // intersections and Connect Four a whole column to drop into, so both
     // preview a ghost on the single square the pointer is over instead of
-    // painting a board full of markers. They are named here so that a board
+    // painting a board full of markers. Hex is the same case with different
+    // numbers: 49 legal cells, every turn. They are named here so that a board
     // quietly joining them fails the count below.
-    const UNMARKED = new Set(["gomoku", "connect4"]);
+    const UNMARKED = new Set(["gomoku", "connect4", "hex"]);
 
     for (const [kind, load] of BOARD_VIEWS) {
       const View = (await load()) as React.ComponentType<Record<string, unknown>>;
@@ -701,15 +702,16 @@ describe("board sizing", () => {
       unmount();
     }
   });
-  it("lays the chess labels out from the board's own tracks, not an offset", async () => {
-    // The file row used to be pulled into line with `ml-[21px]` — 16px of rank
-    // gutter, 4px of gap, 1px of half-border, as one remembered number. The
-    // assertion that matters is that no such offset exists any more, and that
-    // the board itself is the square the whole thing is measured against.
-    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
-    const engine = getSessionEngine("chess");
+  it("lays the Hex rhombus out in fractions of the board, not in pixels", async () => {
+    // The rhombus rests on one fact: the board is ten cell-widths across and
+    // seven tall, so every row is 70% of the width and every offset is a
+    // fraction of it. A hard-coded pixel offset would break the moment the
+    // rails or the padding changed, and the shape is the rule — the diagonals
+    // only connect if the rows are really half a cell apart.
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
+    const engine = getSessionEngine("hex");
     const { container, unmount } = render(
-      <ChessBoardView
+      <HexBoardView
         board={engine.createInitialBoard()}
         selected={new Set<string>()}
         legalSquares={new Set<string>()}
@@ -718,79 +720,41 @@ describe("board sizing", () => {
         lastMove={null}
         disabled={false}
         onSquareActivate={() => {}}
-        label="Chess board"
+        label="Hex board"
         size="sm"
       />
     );
-
-    const root = container.firstElementChild as HTMLElement;
-    expect(root.className).toContain("max-w-[min(92vw,580px)]");
-    // No magic pixel offset survives anywhere in the view.
-    expect(root.className).not.toMatch(/ml-\[\d+px\]/);
-    expect(root.style.marginLeft).toBe("");
 
     const grid = container.querySelector('[role="grid"]') as HTMLElement;
-    expect(grid.style.aspectRatio).toBe("1 / 1");
+    // 10 wide by 7 tall: seven cells plus the six half-cell offsets the last
+    // row accumulates.
+    expect(grid.style.aspectRatio).toBe("10 / 7");
+    expect(grid.getAttribute("aria-rowcount")).toBe("7");
+    expect(grid.getAttribute("aria-colcount")).toBe("7");
 
-    // Ranks 1–8 and files a–h, each exactly once, in the flipped order: 8
-    // along the top from Black's side, a at the left from White's.
-    const text = [...container.querySelectorAll("span")].map((n) => n.textContent);
-    expect(text.filter((t) => /^[1-8]$/.test(t ?? ""))).toEqual(["8", "7", "6", "5", "4", "3", "2", "1"]);
-    expect(text.filter((t) => /^[a-h]$/.test(t ?? ""))).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
-
-    // The file row, the rank gutter and the board each split into eight even
-    // tracks, so every label is pinned to one square by the layout itself
-    // rather than by arithmetic anyone has to remember to redo.
-    const evenTracks = container.querySelectorAll('[style*="repeat(8, minmax(0, 1fr))"]');
-    expect(evenTracks.length).toBe(3);
+    const rows = [...container.querySelectorAll('[style*="repeat(7, minmax(0, 1fr))"]')] as HTMLElement[];
+    expect(rows).toHaveLength(7);
+    // 70% of the board, and shifted by half a cell (a twentieth) per row.
+    expect(rows[0]!.style.width).toBe("70%");
+    expect(rows[0]!.style.left).toBe("0%");
+    expect(rows[1]!.style.left).toBe("5%");
+    expect(rows[6]!.style.left).toBe("30%");
+    // No magic pixel offset survives anywhere in the view.
+    for (const row of rows) {
+      expect(row.style.left).not.toMatch(/\d+px/);
+    }
     unmount();
   });
 
-  it("shows chess destinations as green dots and selection as a gold ring", async () => {
-    // A dot inside a destination and a glow around a selection are different
-    // signals for different things, so they must be told apart by shape and
-    // colour, not by a shade of the same green.
-    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
-    const engine = getSessionEngine("chess");
-    const origin = [...engine.getSelectableSquares(engine.createInitialBoard(), "white")][0]!;
-
+  it("marks Hex's two goal edges with rails rather than with a colour swap", async () => {
+    // Black's goal is the top and the bottom; White's is the left and the
+    // right. A player cannot infer that from the stones, so the rule is drawn
+    // on the board — and the rails are placed in the board's own grid, so a
+    // rail is always exactly as long as the edge it names.
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
     const { container, unmount } = render(
-      <ChessBoardView
-        board={engine.createInitialBoard()}
-        selected={new Set([`${origin.x},${origin.y}`])}
-        legalSquares={new Set([`${origin.x},${origin.y + 1}`])}
-        selectableSquares={new Set([`${origin.x},${origin.y}`])}
-        destinations={new Set([`${origin.x},${origin.y + 1}`])}
-        lastMove={null}
-        disabled={false}
-        onSquareActivate={() => {}}
-        label="Chess board"
-        size="sm"
-      />
-    );
-
-    const target = container.querySelector('[data-square="legal"]');
-    expect(target).not.toBeNull();
-    // The dot is an absolutely positioned pseudo-element: no layout space, so
-    // showing a destination cannot nudge a neighbouring square.
-    expect((target as HTMLElement).className).toContain("after:absolute");
-    expect(container.querySelector('[class*="after:bg-emerald-600/80"]')).not.toBeNull();
-
-    const selected = container.querySelector('[aria-pressed="true"]') as HTMLElement;
-    expect(selected.className).toMatch(/ring-2/);
-    expect(selected.className).toMatch(/ring-inset/);
-    expect(selected.className).toMatch(/amber/);
-    unmount();
-  });
-
-  it("gives a chess piece a shadow that separates it from the square under it", async () => {
-    // White and black pieces are told apart by the contrast against the square
-    // they happen to be standing on, which alternates every file. Each side
-    // therefore needs a shadow in the *opposite* direction: black drops white.
-    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
-    const { container, unmount } = render(
-      <ChessBoardView
-        board={getSessionEngine("chess").createInitialBoard()}
+      <HexBoardView
+        board={getSessionEngine("hex").createInitialBoard()}
         selected={new Set<string>()}
         legalSquares={new Set<string>()}
         selectableSquares={new Set<string>()}
@@ -798,26 +762,140 @@ describe("board sizing", () => {
         lastMove={null}
         disabled={false}
         onSquareActivate={() => {}}
-        label="Chess board"
+        label="Hex board"
         size="sm"
       />
     );
 
-    // `"♔♕…".includes("")` is true, so an empty span would match the glyph set
-    // and be counted as a thirty-third piece.
-    const glyphs = [...container.querySelectorAll("span[aria-hidden='true']")].filter(
-      (n) => (n.textContent ?? "").length === 1 && "♔♕♖♗♘♙♚♛♜♝♞♟".includes(n.textContent as string)
+    const rails = [...container.querySelectorAll("span[style*='grid-area']")] as HTMLElement[];
+    expect(rails).toHaveLength(4);
+    // Two horizontal (Black, above and below) and two vertical (White).
+    const horizontal = rails.filter((n) => n.className.includes("bg-neutral-900"));
+    const vertical = rails.filter((n) => n.className.includes("bg-neutral-50"));
+    expect(horizontal.map((n) => n.style.gridArea)).toEqual(["1 / 2", "3 / 2"]);
+    expect(vertical.map((n) => n.style.gridArea)).toEqual(["2 / 1", "2 / 3"]);
+    // The white rails are a light fill, so they need the dark rim the black
+    // rails — which are dark themselves — do not.
+    for (const rail of vertical) expect(rail.className).toContain("border-neutral-300");
+    unmount();
+  });
+
+  it("marks no Hex cell in advance, and previews the stone under the pointer", async () => {
+    // Every empty cell in Hex is legal on every turn, so a marker per
+    // destination would be 49 dots stating what the board already states: this
+    // cell is empty. Painting them is not merely noisy — it is two marks for
+    // one fact the moment a ghost appears over a marked cell. The ghost is
+    // therefore the only marker, and it is inert: it never intercepts the click
+    // and never reaches the accessible tree.
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
+    const { container, unmount } = render(
+      <HexBoardView
+        board={getSessionEngine("hex").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set(["2,2"])}
+        selectableSquares={new Set<string>()}
+        destinations={new Set(["2,2"])}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Hex board"
+        size="sm"
+      />
     );
-    expect(glyphs.length).toBe(32);
-    const white = glyphs.filter((n) => n.className.includes("text-white"));
-    const black = glyphs.filter((n) => n.className.includes("text-neutral-950"));
-    expect(white.length).toBe(16);
-    expect(black.length).toBe(16);
-    expect(white[0]!.className).toContain("rgba(0,0,0,0.8)");
-    expect(black[0]!.className).toContain("rgba(255,255,255,0.8)");
-    // Tournament wood, not a yellow board.
-    expect(container.querySelector('[class*="#F0D9B5"]')).not.toBeNull();
-    expect(container.querySelector('[class*="#B58863"]')).not.toBeNull();
+
+    // Not one dot, on the legal cell or anywhere else.
+    expect(container.querySelector('[data-square="legal"]')).toBeNull();
+    expect(container.querySelector('[class*="after:bg-"]')).toBeNull();
+
+    const tile = container.querySelector("[data-board-surface]") as HTMLElement;
+    expect(tile.className).toContain("group");
+    const ghost = tile.querySelector('[aria-hidden="true"]') as HTMLElement;
+    expect(ghost.className).toContain("pointer-events-none");
+    expect(ghost.className).toContain("group-hover:bg-neutral-500/30");
+    // Invisible until hovered, so an untouched board shows 49 empty cells.
+    expect(ghost.className).toContain("bg-neutral-500/0");
+    // The ghost is the size of a real stone, or the preview misleads about
+    // the size of the thing being placed.
+    expect(ghost.className).toContain("size-[74%]");
+    unmount();
+  });
+
+  it("shows no Hex ghost at all on a locked board", async () => {
+    // A locked board must not advertise an option it will refuse. Relying on
+    // the pointer never arriving is not the same as not drawing it: the element
+    // would still be in the tree, and still in the accessible one.
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
+    const { container, unmount } = render(
+      <HexBoardView
+        board={getSessionEngine("hex").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set(["2,2"])}
+        selectableSquares={new Set<string>()}
+        destinations={new Set(["2,2"])}
+        lastMove={null}
+        disabled
+        onSquareActivate={() => {}}
+        label="Hex board"
+        size="sm"
+      />
+    );
+
+    expect(container.querySelectorAll('[data-square="legal"]').length).toBe(0);
+    expect(container.querySelector('[class*="group-hover:bg-neutral-500/30"]')).toBeNull();
+    // 49 cells are still drawn and still labelled: a locked board is still a
+    // board, and a player watching the opponent has to be able to read it.
+    expect(container.querySelectorAll("[data-board-surface]")).toHaveLength(49);
+    unmount();
+  });
+
+  it("draws a Hex stone with an edge, because the disc has none of its own", async () => {
+    // A black disc on a pale cell and a white disc on a near-white one are both
+    // greys, so each side gets a different kind of separation: shading for the
+    // jet stone, a dark hairline for the pearl.
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
+    const engine = getSessionEngine("hex");
+    const board = engine.applyMove(
+      engine.createInitialBoard(),
+      { from: undefined, to: { x: 1, y: 1 } },
+      "black"
+    ).board;
+    const withWhite = engine.applyMove(board, { from: undefined, to: { x: 2, y: 1 } }, "white").board;
+
+    const { container, unmount } = render(
+      <HexBoardView
+        board={withWhite}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Hex board"
+        size="sm"
+      />
+    );
+
+    // Selected by the stone's own size class, not by its colour: the two Black
+    // goal rails share `bg-neutral-900` and come first in the DOM, so a colour
+    // match would find a rail and quietly assert that a rail has a gloss.
+    const jet = container.querySelector('span.bg-neutral-900[class*="size-"]') as HTMLElement;
+    expect(jet).not.toBeNull();
+    // The gloss, which is what stops a black disc reading as a hole. Matched on
+    // the attribute rather than a selector: a `/` in a Tailwind opacity is
+    // unambiguous in a class attribute and awkward in a selector, and what is
+    // under test is that the gloss exists.
+    expect(
+      [...jet.children].some((c) => (c.getAttribute("class") ?? "").includes("bg-white/40"))
+    ).toBe(true);
+    // The pearl's rim.
+    const pearl = container.querySelector('span.bg-neutral-50[class*="size-"]') as HTMLElement;
+    expect(pearl).not.toBeNull();
+    expect(pearl.className).toContain("border");
+    // Both stones are drawn the same size, so the board does not read as
+    // giving one player bigger pieces.
+    expect(jet.className).toContain("size-[74%]");
+    expect(pearl.className).toContain("size-[74%]");
     unmount();
   });
 

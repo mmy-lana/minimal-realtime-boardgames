@@ -47,11 +47,17 @@ import { BoardStage, type BoardCellSize } from "./BoardStage";
 /**
  * Per-game rules, shown from the header.
  *
- * Two of these games are two-step (Checkers and Chess: pick a piece, then pick
- * a destination) and nothing on screen says so. A player who clicks a checker
+ * One of these games is two-step (Checkers: pick a piece, then pick a
+ * destination) and nothing on screen says so. A player who clicks a checker
  * and sees it sit still has no way to learn that the next click is the one
  * that moves it, so the interaction model is stated here alongside the win
  * condition.
+ *
+ * The Hex entry has to say something the other five do not: that a tie cannot
+ * happen. A player who has been told "connect the board" reasonably expects to
+ * be told what happens if nobody connects it, and the honest answer is that
+ * the situation is unreachable — which is a rule worth stating rather than a
+ * reassurance worth implying.
  */
 const GAME_RULES: Record<GameKind, { objective: string; steps: string[] }> = {
   tictactoe: {
@@ -94,12 +100,12 @@ const GAME_RULES: Record<GameKind, { objective: string; steps: string[] }> = {
       "Jump over an adjacent opponent piece into an empty square to capture it, and reaching the far edge crowns your piece as a King, which moves and captures backwards too.",
     ],
   },
-  chess: {
-    objective: "Checkmate the opponent's king.",
+  hex: {
+    objective: "Connect your two opposite board sides with an unbroken chain of stones.",
     steps: [
-      "Click a piece to reveal every square it may legally reach, then click one of those squares to move.",
-      "Pawns move one square forward, or two on their first move, and capture diagonally. Knights jump.",
-      "You are in check when your king is attacked; you must answer the check on your next move.",
+      "Player 1 Black connects the top edge to the bottom edge; Player 2 White connects the left edge to the right edge.",
+      "Click any open hex to place your stone. Chains join through all six neighbouring hexes, so the diagonals count.",
+      "Draws are mathematically impossible: the first player to complete a chain always wins.",
     ],
   },
 };

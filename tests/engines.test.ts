@@ -41,18 +41,19 @@ import {
   isPlayableSquare,
 } from "@/engine/rules/checkers";
 import {
-  applyChessMove,
-  createInitialChessBoard,
-  getChessRawMoves,
-  getChessSelectableSquares,
-} from "@/engine/rules/chess";
+  applyHexMove,
+  checkHexWin,
+  createInitialHexBoard,
+  getHexLegalMoves,
+  HEX_DIRECTIONS,
+  HEX_SIZE,
+} from "@/engine/rules/hex";
 import type {
   CheckersBoard,
-  ChessBoard,
-  ChessPiece,
   Connect4Board,
   Coordinates,
   GomokuBoard,
+  HexBoard,
   ReversiBoard,
   TicTacToeBoard,
 } from "@/engine/types";
@@ -128,9 +129,35 @@ function emptyCheckers(): CheckersBoard {
   return Array.from({ length: CHECKERS_SIZE }, () => Array<CheckersBoard[number][number]>(CHECKERS_SIZE).fill(null));
 }
 
-/** An empty Chess board. */
-function emptyChess(): ChessBoard {
-  return Array.from({ length: 8 }, () => Array<ChessPiece | null>(8).fill(null));
+/** An empty Hex board. */
+function emptyHex(): HexBoard {
+  return Array.from({ length: HEX_SIZE }, () => Array<HexBoard[number][number]>(HEX_SIZE).fill(null));
+}
+
+/**
+ * Paints a Hex board from `(x, y, colour)` triples.
+ *
+ * The engine's own `applyHexMove` would refuse to place a stone without also
+ * resolving the win condition, which makes it useless for building the
+ * *unfinished* positions these tests need. Painting is a fixture, not a rule.
+ */
+function hexPosition(triples: readonly (readonly [number, number, "black" | "white"])[]): HexBoard {
+  const board = emptyHex();
+  for (const [x, y, color] of triples) setAt(board, x, y, color);
+  return board;
+}
+
+/** A `y = 0` to `y = 6` run in one column, plus the white stone that must not help. */
+function blackColumn(x: number, breaks: readonly number[] = []): HexBoard {
+  const triples: [number, number, "black" | "white"][] = [];
+  for (let y = 0; y < HEX_SIZE; y += 1) {
+    if (breaks.includes(y)) {
+      triples.push([x, y, "white"]);
+    } else {
+      triples.push([x, y, "black"]);
+    }
+  }
+  return hexPosition(triples);
 }
 
 /** An empty 6x7 board painted so that no four-in-a-row exists in any direction. */
@@ -1022,185 +1049,185 @@ describe("checkers engine", () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* Chess                                                                     */
+/* Hex                                                                       */
 /* -------------------------------------------------------------------------- */
 
-describe("chess engine", () => {
-  it("opens with the standard back ranks and eight pawns per side", () => {
-    const board = createInitialChessBoard();
-    expect(board[0]?.[0]).toEqual({ color: "black", type: "r", hasMoved: false });
-    expect(board[0]?.[4]).toEqual({ color: "black", type: "k", hasMoved: false });
-    expect(board[7]?.[4]).toEqual({ color: "white", type: "k", hasMoved: false });
-    expect(board[1]?.every((c) => c?.type === "p" && c.color === "black")).toBe(true);
-    expect(board[6]?.every((c) => c?.type === "p" && c.color === "white")).toBe(true);
+describe("hex engine", () => {
+  it("opens empty with all 49 cells playable", () => {
+    const board = createInitialHexBoard();
+    expect(board).toHaveLength(HEX_SIZE);
+    expect(board.every((row) => row.length === HEX_SIZE && row.every((c) => c === null))).toBe(true);
+    // A Hex move is a placement, so the legal set is every empty cell: 49 at
+    // the start, and one fewer per stone already on the board.
+    expect(getHexLegalMoves(board)).toHaveLength(HEX_SIZE * HEX_SIZE);
   });
 
-  it("gives a starting pawn one or two squares and no empty diagonal", () => {
-    const board = createInitialChessBoard();
-    expect(getChessRawMoves(board, { x: 4, y: 1 }, "black")).toEqual([
-      { x: 4, y: 2 },
-      { x: 4, y: 3 },
+  it("shrinks the legal set by exactly one per stone", () => {
+    let board = createInitialHexBoard();
+    for (let index = 0; index < 5; index += 1) {
+      board = applyHexMove(board, { x: index, y: 0 }, index % 2 === 0 ? "black" : "white").nextBoard;
+      expect(getHexLegalMoves(board)).toHaveLength(49 - index - 1);
+    }
+  });
+
+  it("never offers an occupied cell", () => {
+    const board = hexPosition([
+      [0, 0, "black"],
+      [3, 2, "white"],
+      [6, 6, "black"],
     ]);
+    const legal = new Set(getHexLegalMoves(board).map((c) => `${c.x},${c.y}`));
+    expect(legal.has("0,0")).toBe(false);
+    expect(legal.has("3,2")).toBe(false);
+    expect(legal.has("6,6")).toBe(false);
+    expect(legal).toHaveLength(49 - 3);
   });
 
-  it("blocks a pawn's double step when the path is occupied", () => {
-    const board = createInitialChessBoard();
-    board[2]![4] = { color: "black", type: "p", hasMoved: false };
-    expect(getChessRawMoves(board, { x: 4, y: 1 }, "black")).toEqual([]);
+  it("refuses a move onto an occupied or off-board cell", () => {
+    const board = hexPosition([[2, 2, "black"]]);
+    expect(() => applyHexMove(board, { x: 2, y: 2 }, "white")).toThrow(/already occupied/);
+    expect(() => applyHexMove(board, { x: 7, y: 0 }, "black")).toThrow(/out of bounds/);
+    expect(() => applyHexMove(board, { x: 0, y: -1 }, "black")).toThrow(/out of bounds/);
   });
 
-  it("gives a moved pawn only the single step", () => {
-    const board = emptyChess();
-    setAt(board, 4, 3, { color: "black", type: "p", hasMoved: true });
-    // Black advances towards row 7 in this engine's coordinate space.
-    expect(getChessRawMoves(board, { x: 4, y: 3 }, "black")).toEqual([{ x: 4, y: 4 }]);
+  it("gives Black a win down a column across all seven rows", () => {
+    const board = hexPosition([
+      [3, 0, "black"],
+      [3, 1, "black"],
+      [3, 2, "black"],
+      [3, 3, "black"],
+      [3, 4, "black"],
+      [3, 5, "black"],
+      [3, 6, "black"],
+    ]);
+    expect(checkHexWin(board, "black")).toBe(true);
+    // White holds nothing here, so its own span is untested by this position.
+    expect(checkHexWin(board, "white")).toBe(false);
   });
 
-  it("gives white's pawns the mirrored direction", () => {
-    const board = emptyChess();
-    setAt(board, 4, 5, { color: "white", type: "p", hasMoved: true });
-    expect(getChessRawMoves(board, { x: 4, y: 5 }, "white")).toEqual([{ x: 4, y: 4 }]);
+  it("gives White a win across a row through all seven columns", () => {
+    const triples: [number, number, "black" | "white"][] = [];
+    for (let x = 0; x < HEX_SIZE; x += 1) triples.push([x, 4, "white"]);
+    const board = hexPosition(triples);
+    expect(checkHexWin(board, "white")).toBe(true);
+    expect(checkHexWin(board, "black")).toBe(false);
   });
 
-  it("captures diagonally only onto an enemy piece", () => {
-    const board = emptyChess();
-    board[1]![4] = { color: "black", type: "p", hasMoved: false };
-    board[2]![3] = { color: "white", type: "p", hasMoved: true };
-    board[2]![5] = { color: "black", type: "p", hasMoved: true };
-
-    const targets = getChessRawMoves(board, { x: 4, y: 1 }, "black");
-    expect(targets).toContainEqual({ x: 3, y: 2 });
-    expect(targets).not.toContainEqual({ x: 5, y: 2 });
+  it("does not award a win to a lone stone on a goal edge", () => {
+    // The single most valuable false positive in this engine. The win is tested
+    // when a stone is *dequeued* from the flood, not when it is discovered, so
+    // a chain that starts on the goal edge still has to reach the far one.
+    expect(checkHexWin(hexPosition([[4, 0, "black"]]), "black")).toBe(false);
+    expect(checkHexWin(hexPosition([[0, 3, "white"]]), "white")).toBe(false);
   });
 
-  it("moves a knight to all eight offsets when unblocked", () => {
-    const board = emptyChess();
-    board[3]![3] = { color: "black", type: "n" };
-    expect(getChessRawMoves(board, { x: 3, y: 3 }, "black")).toHaveLength(8);
+  it("does not award a win for a chain that misses one of the two goal edges", () => {
+    // A column that stops one row short of the bottom.
+    const triples: [number, number, "black" | "white"][] = [];
+    for (let y = 0; y < HEX_SIZE - 1; y += 1) triples.push([2, y, "black"]);
+    expect(checkHexWin(hexPosition(triples), "black")).toBe(false);
   });
 
-  it("stops a knight at the board edge", () => {
-    const board = emptyChess();
-    board[0]![0] = { color: "black", type: "n" };
-    expect(getChessRawMoves(board, { x: 0, y: 0 }, "black")).toHaveLength(2);
+  it("resolves the winner on the move that completes the chain", () => {
+    // Six black stones with a single gap in the bottom row: nothing has been
+    // won yet, and the position is genuinely one move from being over.
+    const nearly = hexPosition([
+      [4, 0, "black"],
+      [4, 1, "black"],
+      [4, 2, "black"],
+      [4, 3, "black"],
+      [4, 4, "black"],
+      [4, 6, "black"],
+    ]);
+    expect(checkHexWin(nearly, "black")).toBe(false);
+
+    const after = applyHexMove(nearly, { x: 4, y: 5 }, "black");
+    expect(after.winner).toBe("black");
+    expect(after.isDraw).toBe(false);
+    // The same position, filled elsewhere, is still unfinished.
+    expect(applyHexMove(nearly, { x: 0, y: 6 }, "white").winner).toBeNull();
   });
 
-  it("slides a rook orthogonally and blocks at the first piece", () => {
-    const board = emptyChess();
-    board[3]![3] = { color: "black", type: "r" };
-    board[3]![6] = { color: "white", type: "p", hasMoved: true };
-
-    const targets = getChessRawMoves(board, { x: 3, y: 3 }, "black");
-    expect(targets).toContainEqual({ x: 0, y: 3 });
-    expect(targets).toContainEqual({ x: 6, y: 3 });
-    expect(targets).not.toContainEqual({ x: 7, y: 3 });
-    expect(targets.every((t) => t.x === 3 || t.y === 3)).toBe(true);
+  it("joins chains along the diagonal, per the six directions", () => {
+    // (6,0) -> (5,1) -> (4,2) -> (3,3) -> (2,4) -> (1,5) -> (0,6) is a
+    // staircase: no two stones are orthogonally adjacent, and it is the
+    // diagonal pair [-1,1] / [1,-1] that makes them neighbours at all. It runs
+    // from the top edge to the bottom edge, so Black has won.
+    const triples: [number, number, "black" | "white"][] = [];
+    for (let step = 0; step < HEX_SIZE; step += 1) {
+      triples.push([HEX_SIZE - 1 - step, step, "black"]);
+    }
+    expect(checkHexWin(hexPosition(triples), "black")).toBe(true);
   });
 
-  it("slides a bishop on diagonals only", () => {
-    const board = emptyChess();
-    board[3]![3] = { color: "black", type: "b" };
-    const targets = getChessRawMoves(board, { x: 3, y: 3 }, "black");
-    // 4 + 3 + 3 + 3 from the centre of an empty board.
-    expect(targets).toHaveLength(13);
-    expect(targets.every((t) => Math.abs(t.x - 3) === Math.abs(t.y - 3))).toBe(true);
+  it("treats the other diagonal as a gap, not a connection", () => {
+    // The same staircase stepped the other way: (0,0) -> (1,1) is an offset of
+    // (dy=1, dx=1), which is not in HEX_DIRECTIONS — each row is shifted left
+    // of the one below it, not right — so these seven stones are seven
+    // unrelated cells and nobody has connected anything.
+    const board = hexPosition([
+      [0, 0, "black"],
+      [1, 1, "black"],
+      [2, 2, "black"],
+      [3, 3, "black"],
+      [4, 4, "black"],
+      [5, 5, "black"],
+      [6, 6, "black"],
+    ]);
+    expect(checkHexWin(board, "black")).toBe(false);
   });
 
-  it("moves a queen on both axes and diagonals", () => {
-    const board = emptyChess();
-    board[3]![3] = { color: "black", type: "q" };
-    const targets = getChessRawMoves(board, { x: 3, y: 3 }, "black");
-    expect(targets).toHaveLength(14 + 13);
+  it("does not join two chains through a stone of the other colour", () => {
+    const board = hexPosition([
+      [3, 0, "black"],
+      [3, 1, "white"],
+      [3, 2, "black"],
+      [3, 3, "black"],
+      [3, 4, "black"],
+      [3, 5, "black"],
+      [3, 6, "black"],
+    ]);
+    expect(checkHexWin(board, "black")).toBe(false);
   });
 
-  it("moves a king one square in eight directions", () => {
-    const board = emptyChess();
-    board[3]![3] = { color: "black", type: "k" };
-    expect(getChessRawMoves(board, { x: 3, y: 3 }, "black")).toHaveLength(8);
+  it("states adjacency in exactly six directions, each with an opposite", () => {
+    // The engine, the win check and the board view all read this one list. A
+    // fifth or a seventh entry would change the game without changing the
+    // board the player is looking at.
+    expect(HEX_DIRECTIONS).toHaveLength(6);
+    for (const [dy, dx] of HEX_DIRECTIONS) {
+      expect([-1, 0, 1]).toContain(dy);
+      expect([-1, 0, 1]).toContain(dx);
+      expect(`${dy},${dx}`).not.toBe("0,0");
+    }
+    const keys = new Set(HEX_DIRECTIONS.map(([dy, dx]) => `${dy},${dx}`));
+    for (const [dy, dx] of HEX_DIRECTIONS) {
+      expect(keys.has(`${dy * -1},${dx * -1}`), `${dy},${dx} needs its opposite`).toBe(true);
+    }
   });
 
-  it("refuses to move an opponent's piece or an empty square", () => {
-    const board = createInitialChessBoard();
-    expect(getChessRawMoves(board, { x: 4, y: 1 }, "white")).toEqual([]);
-    expect(getChessRawMoves(board, { x: 3, y: 3 }, "black")).toEqual([]);
+  it("never mutates the board it was given", () => {
+    const board = hexPosition([
+      [1, 0, "black"],
+      [1, 1, "white"],
+    ]);
+    const before = JSON.stringify(board);
+
+    const result = applyHexMove(board, { x: 1, y: 2 }, "black");
+    expect(JSON.stringify(board)).toBe(before);
+    expect(at(result.nextBoard, 1, 2)).toBe("black");
+    expect(at(result.nextBoard, 1, 1)).toBe("white");
+    // The rows are new objects too, so a view still holding the old board
+    // cannot be re-rendered into the new one by reference.
+    expect(result.nextBoard).not.toBe(board);
+    expect(result.nextBoard[0]).not.toBe(board[0]);
   });
 
-  it("marks the moved piece and clears the origin without mutating the input", () => {
-    const board = createInitialChessBoard();
-    const result = applyChessMove(board, { x: 4, y: 1 }, { x: 4, y: 3 }, "black");
-    expect(result.nextBoard[1]![4]).toBeNull();
-    expect(result.nextBoard[3]![4]).toEqual({ color: "black", type: "p", hasMoved: true });
-    expect(board[1]![4]).not.toBeNull();
-  });
-
-  it("removes a captured piece", () => {
-    const board = emptyChess();
-    setAt(board, 4, 1, { color: "black", type: "p", hasMoved: false });
-    setAt(board, 5, 2, { color: "white", type: "p", hasMoved: true });
-    const countPieces = (b: ChessBoard): number =>
-      b.reduce((total, row) => total + row.filter((c) => c !== null).length, 0);
-
-    const result = applyChessMove(board, { x: 4, y: 1 }, { x: 5, y: 2 }, "black");
-    // The destination holds the mover's pawn; the defender is gone.
-    expect(at(result.nextBoard, 5, 2)).toEqual({ color: "black", type: "p", hasMoved: true });
-    expect(at(result.nextBoard, 4, 1)).toBeNull();
-    expect(countPieces(result.nextBoard)).toBe(1);
-  });
-
-  it("ends the game when the king is captured", () => {
-    const board = emptyChess();
-    board[3]![3] = { color: "black", type: "r" };
-    board[3]![5] = { color: "white", type: "k" };
-
-    const result = applyChessMove(board, { x: 3, y: 3 }, { x: 5, y: 3 }, "black");
-    expect(result.winner).toBe("black");
-    expect(result.isDraw).toBe(false);
-  });
-
-  it("leaves the winner unset when the opponent king survives", () => {
-    const board = emptyChess();
-    board[1]![4] = { color: "black", type: "p", hasMoved: false };
-    board[7]![4] = { color: "white", type: "k" };
-    const result = applyChessMove(board, { x: 4, y: 1 }, { x: 4, y: 2 }, "black");
-    expect(result.winner).toBeNull();
-    expect(result.isDraw).toBe(false);
-  });
-
-  it("rejects a move outside the pseudo-legal set", () => {
-    const board = createInitialChessBoard();
-    expect(() => applyChessMove(board, { x: 4, y: 1 }, { x: 7, y: 1 }, "black")).toThrow(
-      /Invalid chess move/
-    );
-  });
-
-  it("rejects a pawn stepping sideways", () => {
-    const board = emptyChess();
-    board[1]![4] = { color: "black", type: "p", hasMoved: false };
-    expect(() => applyChessMove(board, { x: 4, y: 1 }, { x: 5, y: 2 }, "black")).toThrow(
-      /Invalid chess move/
-    );
-  });
-
-  it("lists only own pieces that still have a move", () => {
-    const board = createInitialChessBoard();
-    const selectable = getChessSelectableSquares(board, "black");
-    // The two rooks, two bishops and the queen are hemmed in by their own
-    // pawns; the eight pawns and both knights can move.
-    expect(selectable).toHaveLength(10);
-    expect(selectable.every((c) => board[c.y]?.[c.x]?.color === "black")).toBe(true);
-  });
-
-  it("never reports a draw, matching the micro-engine's scope", () => {
-    // The plan scopes chess to movement only: no insufficient-material rule and
-    // no fifty-move counter, so `isDraw` is structurally always false.
-    const opening = applyChessMove(
-      createInitialChessBoard(),
-      { x: 4, y: 1 },
-      { x: 4, y: 3 },
-      "black"
-    );
-    expect(opening.isDraw).toBe(false);
-    expect(opening.winner).toBeNull();
+  it("never reports a draw: the Hex theorem leaves no tie to reach", () => {
+    const board = createInitialHexBoard();
+    expect(applyHexMove(board, { x: 0, y: 0 }, "black").isDraw).toBe(false);
+    expect(applyHexMove(board, { x: 6, y: 6 }, "black").isDraw).toBe(false);
+    expect(applyHexMove(board, { x: 3, y: 3 }, "white").isDraw).toBe(false);
   });
 });
 
@@ -1216,7 +1243,7 @@ describe("cross-engine invariants", () => {
       createInitialGomokuBoard,
       createInitialReversiBoard,
       createInitialCheckersBoard,
-      createInitialChessBoard,
+      createInitialHexBoard,
     ] as const;
 
     for (const initialise of initialisers) {

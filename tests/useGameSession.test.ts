@@ -359,7 +359,7 @@ describe("useGameSession on a two-step game", () => {
   });
 
   it("silently ignores a bare tap in a movement game, with nothing to show for it", async () => {
-    // In checkers and chess there is no such thing as "put a piece down here".
+    // In checkers there is no such thing as "put a piece down here".
     // A tap on a square the player does not own, with nothing lifted, was never
     // a move attempt — it was someone touching the board. Handing it to the
     // engine produced "an origin square is required": a complaint about a
@@ -380,8 +380,9 @@ describe("useGameSession on a two-step game", () => {
   it("never tells the player that an origin square is required", async () => {
     // Stated as a sweep because the message is the defect: it names a field in
     // a move payload. Whichever way the intent resolver is rewritten, no tap in
-    // either movement game may surface it.
-    for (const gameKind of ["checkers", "chess"] as const) {
+    // the movement game may surface it. Hex is deliberately absent — it has no
+    // origin square at all, so the message is not merely hidden but impossible.
+    for (const gameKind of ["checkers"] as const) {
       const engine = getSessionEngine(gameKind);
       const initial = localSession({ gameKind, boardSnapshot: engine.createInitialBoard() });
       const { result } = renderHook(() => useGameSession(initial));
