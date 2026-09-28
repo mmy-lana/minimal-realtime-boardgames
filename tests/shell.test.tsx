@@ -697,6 +697,86 @@ describe("board sizing", () => {
     }
   });
 
+  it("renders a played board for every kind, not just the opening one", async () => {
+    // A board view that renders the empty layout perfectly and then misrenders
+    // once there is something to draw is the common failure, and a test that
+    // only ever opens a game cannot see it. So each kind is played a few plies
+    // through the engine and re-rendered.
+    // `[data-board-surface]` is the clickable unit, which is not always the
+    // drawn cell: Connect Four makes the whole column one surface, because the
+    // 42 drawn cells are decorative inside a single drop target. Counting the
+    // surface rather than the cell is therefore the right unit to assert on —
+    // it is what a click can actually reach, and it is what the click-handling
+    // tests above already speak in.
+    const TILE_COUNT: Readonly<Record<GameKind, number>> = {
+      tictactoe: 9,
+      gomoku: 15 * 15,
+      reversi: 8 * 8,
+      checkers: 8 * 8,
+      connect4: 7,
+      hex: 7 * 7,
+    };
+
+    for (const [kind, load] of BOARD_VIEWS) {
+      const View = (await load()) as React.ComponentType<Record<string, unknown>>;
+      const engine = getSessionEngine(kind);
+      const props = (board: unknown, disabled = false) => ({
+        board,
+        selected: new Set<string>(),
+        legalSquares: new Set<string>(),
+        selectableSquares: new Set<string>(),
+        destinations: new Set<string>(),
+        lastMove: null,
+        disabled,
+        onSquareActivate: () => {},
+        label: `${kind} board`,
+        size: "sm",
+      });
+
+      const opening = engine.createInitialBoard();
+      const first = render(<View {...props(opening)} />);
+      const openingMarkup = first.container.innerHTML;
+      const openingTiles = first.container.querySelectorAll("[data-board-surface]").length;
+      expect(openingTiles, `${kind} tile count`).toBe(TILE_COUNT[kind]);
+      first.unmount();
+
+      // Play until two moves have been made, or the engine says there is
+      // nothing to play. Hex needs no origin square, so the move shape differs
+      // by kind; the loop below picks the one the engine asks for.
+      let board = opening;
+      let player: PlayerColor = "black";
+      for (let ply = 0; ply < 2; ply += 1) {
+        const squares = engine.usesOriginSquare
+          ? engine.getSelectableSquares(board, player)
+          : engine.getLegalSquares(board, player);
+        const from = squares[ply] ?? squares[0];
+        if (from === undefined) break;
+        const to = engine.usesOriginSquare
+          ? [...engine.getDestinations(board, from, player)][0]
+          : from;
+        if (to === undefined) break;
+        const result = engine.applyMove(board, engine.usesOriginSquare ? { from, to } : { to }, player);
+        if (result.winner !== null) break;
+        board = result.board;
+        player = player === "black" ? "white" : "black";
+      }
+
+      const played = render(<View {...props(board)} />);
+      // Same layout: pieces arriving never add or remove a square. This is the
+      // jitter guarantee, stated for every kind rather than for a sample.
+      expect(
+        played.container.querySelectorAll("[data-board-surface]").length,
+        `${kind} tile count after play`
+      ).toBe(openingTiles);
+      // And something actually changed, or the render would be lying about the
+      // game being in progress.
+      expect(played.container.innerHTML, `${kind} should draw the moves played`).not.toBe(
+        openingMarkup
+      );
+      played.unmount();
+    }
+  });
+
   it("advertises no legal move on a board it has locked", async () => {
     // The marker is painted by a pseudo-element, which no amount of `disabled`
     // removes. A locked board that still shows where the next move could go

@@ -344,8 +344,12 @@ type ItemOutcome =
   /**
    * Remove the item and any newer items for the same game: the remaining tail
    * was computed against a board that is no longer authoritative.
+   *
+   * `detail` is a human-readable reason for a refusal the codes do not name,
+   * carried up to the flush summary so the banner can explain what happened
+   * rather than only reporting that something did.
    */
-  | { kind: "abandon" };
+  | { kind: "abandon"; detail?: string };
 // A connectivity failure is not modelled here: it is thrown by the Supabase
 // client and caught by the drain loop, which stops without touching any item.
 
@@ -416,6 +420,7 @@ async function drainSyncQueue(): Promise<FlushSummary> {
       await markConflictAndAbandonTail(db, item);
       summary.dropped += 1;
       summary.conflictDetected = true;
+      if (outcome.detail !== undefined) summary.error = outcome.detail;
       continue;
     }
 
@@ -539,9 +544,20 @@ async function runMoveItem(
 
   const code = asRpcCode(data, SUBMIT_TURN_MOVE_CODES);
   if (code === null) {
-    throw new Error(
-      `submit_turn_move returned an unrecognised result: ${JSON.stringify(data)}`
-    );
+    // A response that is neither an error nor a declared code is a contract
+    // breach, not a lost race. Throwing here would drop it into the drain's
+    // generic catch, which retries a couple of times and then flags the room
+    // `conflict` — telling both players their boards diverged when in fact this
+    // client cannot read the answer. Retrying an unreadable answer is pointless
+    // and holding the move would block every later ply, so it is abandoned on
+    // the first response, with the reason kept for the banner.
+    await getLocalDb().games.update(session.id, {
+      syncState: "conflict",
+    });
+    return {
+      kind: "abandon",
+      detail: `submit_turn_move returned an unrecognised result: ${JSON.stringify(data)}`,
+    };
   }
 
   if (code === "success") {
