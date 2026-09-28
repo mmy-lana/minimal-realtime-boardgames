@@ -44,7 +44,14 @@ export interface BoardTileProps
   selectedRingClass?: string;
   /**
    * Replaces the legal-target marker outright, for the same reason as
-   * `selectedRingClass`. Chess wants a filled green dot; the default is a ring.
+   * `selectedRingClass`. Chess wants a filled green dot; Reversi wants a ghost
+   * disc.
+   *
+   * **Every utility must carry the `after:` prefix.** These classes go onto the
+   * marker's pseudo-element, but the component emits them verbatim, and a
+   * `border-2` written without its prefix lands on the tile itself — which is
+   * the one thing a tile may never carry, and the reason the board suite fails
+   * a view whose marker is written this way.
    */
   targetDotClass?: string;
   children?: React.ReactNode;
@@ -96,7 +103,7 @@ const EMPHASIS_CLASSES: Record<BoardTileEmphasis, string> = {
  */
 const DEFAULT_SELECTED_RING = "ring-2 ring-inset ring-board-dark";
 const LAST_MOVE_RING = "ring-2 ring-inset ring-amber-400/80";
-const DEFAULT_TARGET_DOT = "bg-board-dark/60";
+const DEFAULT_TARGET_DOT = "after:bg-board-dark/60";
 
 /**
  * A single interactive square on a game board.

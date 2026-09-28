@@ -4,6 +4,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameKind, PlayerColor } from "@/engine/types";
+import { coordKey } from "@/components/boards/boardViewTypes";
 
 /**
  * The shell and the board views.
@@ -588,6 +589,118 @@ describe("board sizing", () => {
     unmount();
   });
 
+  it("gives a board exactly one marker per legal destination, never two", async () => {
+    // A destination used to be marked twice on Checkers and Reversi: once by
+    // the tile's own pseudo-element and once by a ghost disc the view rendered
+    // as a child. Two markers for one fact is worse than one, because the
+    // player has to work out whether they disagree.
+    //
+    // The check is structural — "no square carries both kinds" — rather than
+    // "square N carries a ghost". An earlier version of this test located the
+    // destination by matching the coordinate key against the tile's label, and
+    // every board labels its own way ("Square d3", "Column 4, row 5"), so the
+    // lookup missed everywhere and the test passed having checked nothing.
+    const marksOnPseudoElement = (tile: Element) =>
+      /(^|\s)after:(pointer-events-none|absolute|inset-\[)/.test(tile.className);
+    const ghostDiscs = (tile: Element) =>
+      [...tile.children].filter(
+        (child) =>
+          child.tagName === "SPAN" &&
+          child.getAttribute("aria-hidden") === "true" &&
+          !child.textContent
+      ).length;
+
+    // Two boards deliberately mark nothing in advance. Gomoku has 225 legal
+    // intersections and Connect Four a whole column to drop into, so both
+    // preview a ghost on the single square the pointer is over instead of
+    // painting a board full of markers. They are named here so that a board
+    // quietly joining them fails the count below.
+    const UNMARKED = new Set(["gomoku", "connect4"]);
+
+    for (const [kind, load] of BOARD_VIEWS) {
+      const View = (await load()) as React.ComponentType<Record<string, unknown>>;
+      const engine = getSessionEngine(kind);
+      const board = engine.createInitialBoard();
+      const destinations = new Set(
+        engine.usesOriginSquare
+          ? engine
+              .getDestinations(board, engine.getSelectableSquares(board, "black")[0]!, "black")
+              .map(coordKey)
+          : engine.getLegalSquares(board, "black").map(coordKey)
+      );
+      expect(destinations.size, `${kind} should have legal moves to open with`).toBeGreaterThan(0);
+
+      const { container, unmount } = render(
+        <View
+          board={board}
+          selected={new Set<string>()}
+          legalSquares={new Set<string>()}
+          selectableSquares={new Set<string>()}
+          destinations={destinations}
+          lastMove={null}
+          disabled={false}
+          onSquareActivate={() => {}}
+          label={`${kind} board`}
+          size="sm"
+        />
+      );
+
+      const tiles = [...container.querySelectorAll("[data-board-surface]")];
+      expect(tiles.length, `${kind} should render tiles`).toBeGreaterThan(0);
+      const marked = tiles.filter(marksOnPseudoElement);
+      // Non-vacuity: a board that is supposed to mark its destinations has to
+      // actually mark some, or this test is asserting nothing.
+      if (!UNMARKED.has(kind)) {
+        expect(marked.length, `${kind} should mark its destinations`).toBeGreaterThan(0);
+      } else {
+        expect(marked.length, `${kind} marks no destination in advance`).toBe(0);
+      }
+      for (const tile of marked) {
+        expect(
+          ghostDiscs(tile),
+          `${kind} must not draw a ghost disc and a marker on the same square`
+        ).toBe(0);
+      }
+      unmount();
+    }
+  });
+
+  it("advertises no legal move on a board it has locked", async () => {
+    // The marker is painted by a pseudo-element, which no amount of `disabled`
+    // removes. A locked board that still shows where the next move could go
+    // both leaks the opponent's options and flickers on every lock and unlock.
+    for (const [kind, load] of BOARD_VIEWS) {
+      const View = (await load()) as React.ComponentType<Record<string, unknown>>;
+      const engine = getSessionEngine(kind);
+      const board = engine.createInitialBoard();
+      const destinations = new Set(
+        engine.usesOriginSquare
+          ? engine
+              .getDestinations(board, engine.getSelectableSquares(board, "black")[0]!, "black")
+              .map(coordKey)
+          : engine.getLegalSquares(board, "black").map(coordKey)
+      );
+      const { container, unmount } = render(
+        <View
+          board={board}
+          selected={new Set<string>()}
+          legalSquares={new Set<string>()}
+          selectableSquares={new Set<string>()}
+          destinations={destinations}
+          lastMove={null}
+          disabled
+          onSquareActivate={() => {}}
+          label={`${kind} board`}
+          size="sm"
+        />
+      );
+      expect(
+        container.querySelectorAll("[data-square='legal']").length,
+        `${kind} must not mark destinations while locked`
+      ).toBe(0);
+      unmount();
+    }
+  });
   it("lays the chess labels out from the board's own tracks, not an offset", async () => {
     // The file row used to be pulled into line with `ml-[21px]` — 16px of rank
     // gutter, 4px of gap, 1px of half-border, as one remembered number. The
@@ -661,7 +774,7 @@ describe("board sizing", () => {
     // The dot is an absolutely positioned pseudo-element: no layout space, so
     // showing a destination cannot nudge a neighbouring square.
     expect((target as HTMLElement).className).toContain("after:absolute");
-    expect(container.querySelector('[class*="bg-emerald-600/80"]')).not.toBeNull();
+    expect(container.querySelector('[class*="after:bg-emerald-600/80"]')).not.toBeNull();
 
     const selected = container.querySelector('[aria-pressed="true"]') as HTMLElement;
     expect(selected.className).toMatch(/ring-2/);

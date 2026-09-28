@@ -93,31 +93,34 @@ export function ReversiBoardView({
               shape="circle"
               disabled={disabled}
               selected={role === "selected"}
-              isLegalTarget={target}
+              // A disabled board must stop advertising moves: the marker is
+              // the one thing on a tile that survives `disabled`, since it is
+              // painted by a pseudo-element and not by the button's own state.
+              isLegalTarget={target && !disabled}
+              // The default selection ring is board-dark, which vanishes into
+              // the felt. Reversi is the one board where that default is wrong.
+              selectedRingClass="ring-2 ring-inset ring-emerald-200"
+              // One marker, drawn by the tile. The view used to paint a ghost
+              // disc of its own *and* let BoardTile paint a dot underneath it,
+              // so every legal square carried two overlapping rings; a single
+              // hollow disc is also the truer preview, since it is the shape
+              // the square will take rather than a dot in the middle of it.
+              targetDotClass="after:animate-pulse after:border-2 after:border-dashed after:border-emerald-200/90 after:bg-emerald-300/10"
               isLastMove={isLastMove(lastMove, coord)}
               onClick={() => onSquareActivate(coord)}
               className={cn(
-                "rounded-full border-0",
+                "rounded-full",
                 "bg-emerald-800",
                 "hover:bg-emerald-700",
                 "disabled:hover:bg-emerald-800",
                 lastMoveWash(role),
-                selected && "bg-emerald-600",
                 // No last-move ring here: BoardTile already draws one, and two
                 // `ring-*` utilities on an element are a conflict resolved by
                 // stylesheet order rather than by intent.
                 target && "bg-emerald-600"
               )}
             >
-              {cell !== null ? (
-                <Disc color={cell} />
-              ) : target && !disabled ? (
-                <span
-                  aria-hidden="true"
-                  className="block w-[34%] animate-pulse rounded-full border-2 border-dashed border-emerald-200"
-                  style={{ aspectRatio: "1 / 1" }}
-                />
-              ) : null}
+              {cell !== null ? <Disc color={cell} /> : null}
             </BoardTile>
           );
         })

@@ -201,10 +201,10 @@ export function ChessBoardView({
                 // A gold glow rather than a fill: the selected square stays the
                 // same size, and the piece on it stays fully readable.
                 selectedRingClass="ring-2 ring-inset ring-amber-300"
-                isLegalTarget={role === "target"}
+                isLegalTarget={role === "target" && !disabled}
                 // A centred green dot, the convention for a legal destination
                 // in every chess interface ever written.
-                targetDotClass="bg-emerald-600/80"
+                targetDotClass="after:bg-emerald-600/80"
                 isLastMove={isLastMove(lastMove, coord)}
                 onClick={() => onSquareActivate(coord)}
                 className={cn(

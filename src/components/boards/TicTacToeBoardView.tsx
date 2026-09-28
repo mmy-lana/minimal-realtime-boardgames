@@ -148,7 +148,7 @@ export function TicTacToeBoardView({
             size={size}
             disabled={disabled}
             selected={role === "selected"}
-            isLegalTarget={role === "target"}
+            isLegalTarget={role === "target" && !disabled}
             isLastMove={isLastMove(lastMove, coord)}
             onClick={() => onSquareActivate(coord)}
             className={cn(

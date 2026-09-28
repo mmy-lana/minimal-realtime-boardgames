@@ -144,7 +144,13 @@ export function CheckersBoardView({
               // pixel from its neighbour and the checkerboard stays visible
               // under the lifted piece.
               selectedRingClass="ring-4 ring-inset ring-amber-400"
-              isLegalTarget={target}
+              isLegalTarget={target && !disabled}
+              // One marker, drawn by the tile. The view used to render a ghost
+              // disc of its own *and* accept BoardTile's dot underneath it, so
+              // every destination carried two overlapping rings; a single
+              // dashed disc is the truer preview, since it is the shape the
+              // square will take.
+              targetDotClass="after:animate-pulse after:border-2 after:border-dashed after:border-amber-300 after:bg-amber-300/10"
               isLastMove={isLastMove(lastMove, coord)}
               onClick={() => onSquareActivate(coord)}
               className={cn(
@@ -160,15 +166,7 @@ export function CheckersBoardView({
                 // of utilities on one element.
               )}
             >
-              {cell ? (
-                <Checker piece={cell} />
-              ) : target && !disabled && playable ? (
-                <span
-                  aria-hidden="true"
-                  className="block w-full animate-pulse rounded-full border-2 border-dashed border-amber-300"
-                  style={{ aspectRatio: "1 / 1" }}
-                />
-              ) : null}
+              {cell ? <Checker piece={cell} /> : null}
             </BoardTile>
           );
         })

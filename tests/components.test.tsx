@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getSessionEngine } from "@/engine/factory";
 
 /**
  * Section 4.1 — the primitive layer.
@@ -580,5 +581,93 @@ describe("GameOverDialog", () => {
     expect(screen.queryByRole("button", { name: /play again/i })).toBeNull();
     expect(screen.getByText("Move 14 differs between the two copies.")).toBeTruthy();
     expect(document.querySelector("[data-winner-badge]")).toBeNull();
+  });
+});
+
+describe("BoardTile target markers", () => {
+  it("keeps a marker's utilities on the pseudo-element, not on the tile", () => {
+    // `targetDotClass` is emitted verbatim, so a caller who writes a bare
+    // `border-2` puts a real border on the tile — the one thing a tile may
+    // never carry. The prefix is the caller's responsibility, which makes it a
+    // promise the component cannot keep by itself, so the case is pinned here:
+    // the well-formed overrides are clean, and the badly written one is caught.
+    const cases: ReadonlyArray<readonly [string, string | undefined]> = [
+      ["default", undefined],
+      ["green dot", "after:bg-emerald-600/80"],
+      ["ghost disc", "after:animate-pulse after:border-2 after:border-dashed"],
+      ["bare border, as a caller might write it", "border-2"],
+    ];
+    for (const [label, targetDotClass] of cases) {
+      const { unmount } = render(
+        <BoardTile label="e4" onClick={() => {}} isLegalTarget targetDotClass={targetDotClass} />
+      );
+      const bare = (document.querySelector("[data-board-surface]") as HTMLElement)
+        .className.split(/\s+/)
+        .filter((token) => /^border(-\d|$)/.test(token));
+      if (label.startsWith("bare")) expect(bare, "the test must be able to see the hazard").toEqual(["border-2"]);
+      else expect(bare, `${label} marker must not put a border on the tile`).toEqual([]);
+      unmount();
+    }
+  });
+
+  it("keeps a view's marker honest by refusing one that would resize the tile", async () => {
+    // The same hazard seen from the other end: a real board view is checked
+    // against the same rule, so a marker added in Reversi or Chess cannot
+    // quietly start taking a pixel from its neighbours.
+    const { ReversiBoardView } = await import("@/components/boards/ReversiBoardView");
+    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
+    const boxModel = /^(border|w-|h-|size-|min-w-|min-h-|max-w-|max-h-|p|px|py|m|gap)-?/;
+    for (const [name, kind, View] of [
+      ["Reversi", "reversi", ReversiBoardView],
+      ["Chess", "chess", ChessBoardView],
+    ] as const) {
+      const { container, unmount } = render(
+        <View
+          board={getSessionEngine(kind).createInitialBoard()}
+          selected={new Set<string>()}
+          legalSquares={new Set(["0,0"])}
+          selectableSquares={new Set<string>()}
+          destinations={new Set(["0,0"])}
+          lastMove={null}
+          disabled={false}
+          onSquareActivate={() => {}}
+          label={`${name} board`}
+          size="sm"
+        />
+      );
+      // What matters is not the exact list — the size preset differs per view —
+      // but that every tile agrees on it. A marker that added a border to one
+      // square would show up as a tile that disagrees with its neighbours.
+      const boxModels = new Set(
+        [...container.querySelectorAll("[data-board-surface]")].map((tile) =>
+          (tile as HTMLElement).className.split(/\s+/).filter((t) => boxModel.test(t)).sort().join(" ")
+        )
+      );
+      expect(boxModels.size, `${name} tiles must all share one box model`).toBe(1);
+      for (const model of boxModels) {
+        expect(model.split(" ").filter((t) => t.startsWith("border")), `${name} must have no tile border`).toEqual([]);
+      }
+      unmount();
+    }
+  });
+});
+
+describe("Modal header accessory", () => {
+  it("adorns the header without touching the accessible name", () => {
+    // A result screen's badge repeats what the title already says. Inside the
+    // labelled element it would be announced twice on every result dialog.
+    render(
+      <Modal
+        open
+        title="Player 1 (Black) Wins!"
+        onClose={() => {}}
+        headerAccessory={<span data-testid="badge">Black</span>}
+      />
+    );
+    const dialog = screen.getByRole("dialog");
+    const title = document.getElementById(dialog.getAttribute("aria-labelledby")!);
+    expect(title?.textContent).toBe("Player 1 (Black) Wins!");
+    expect(title?.querySelector("[data-testid='badge']")).toBeNull();
+    expect(dialog.querySelector("[data-testid='badge']")).not.toBeNull();
   });
 });
