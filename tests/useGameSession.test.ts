@@ -133,30 +133,96 @@ describe("useGameSession on a place-a-stone game", () => {
     expect(result.current.isLocked).toBe(true);
   });
 
-  it("ends in a draw when the board fills with no line", async () => {
+  it("keeps the game live past nine plies, because a side holds three marks at most", async () => {
     const { result } = renderHook(() => useGameSession(localSession()));
 
-    // X O X / O X X / O X O — all nine squares taken, neither side has three.
+    // The complaint this rule answers: the old game filled all nine squares and
+    // called it a draw, so two players who played perfectly had nothing to win.
+    // With a cap of three marks a side, six marks are the most the board can
+    // ever hold, three cells are always open, and the game cannot end in a draw.
+    // A deterministic sweep, so the positions are reproducible.
+    for (let scan = 0; scan < 40; scan += 1) {
+      const board = result.current.board;
+      if (board.kind !== "tictactoe") throw new Error("expected a tic-tac-toe board");
+      const index = scan % 9;
+      if (board.state[index] !== null) continue;
+
+      await act(async () => {
+        await result.current.makeMove({ x: index % 3, y: Math.floor(index / 3) });
+      });
+
+      expect(result.current.session?.status).not.toBe("draw");
+      expect(board.state.filter((cell) => cell !== null).length).toBeLessThanOrEqual(6);
+      if (result.current.session?.status !== "active") break;
+    }
+
+    // The sweep ends in a line, not in a full board: the outcome the cap exists
+    // to guarantee.
+    expect(result.current.session?.status).toMatch(/^won_(black|white)$/);
+    expect(result.current.session?.winner).not.toBeNull();
+    expect(result.current.session?.turnNumber).toBeGreaterThan(4);
+  });
+
+  it("tells the board which mark the next move will lift, and only when one is at stake", async () => {
+    const { result } = renderHook(() => useGameSession(localSession()));
+    expect(result.current.vanishingSquares).toEqual(new Set());
+
+    // A game that never completes a line, so it is still in progress at the end.
     for (const to of [
-      { x: 0, y: 0 },
-      { x: 1, y: 0 },
-      { x: 2, y: 0 },
-      { x: 0, y: 1 },
-      { x: 1, y: 1 },
-      { x: 0, y: 2 },
-      { x: 2, y: 1 },
-      { x: 2, y: 2 },
-      { x: 1, y: 2 },
+      { x: 0, y: 0 }, // black
+      { x: 1, y: 0 }, // white
+      { x: 2, y: 0 }, // black
+      { x: 1, y: 1 }, // white
+      { x: 0, y: 1 }, // black — black now holds three
     ]) {
       await act(async () => {
         await result.current.makeMove(to);
       });
     }
 
-    expect(result.current.session?.status).toBe("draw");
-    expect(result.current.session?.winner).toBeNull();
-    expect(result.current.session?.turnNumber).toBe(9);
+    // It is white's move, and white holds two marks, so nothing is at stake. The
+    // hint belongs to the player about to move: warning black about a mark that
+    // white will never lift is a hint that lies.
+    expect(result.current.vanishingSquares).toEqual(new Set());
+
+    await act(async () => {
+      await result.current.makeMove({ x: 2, y: 1 }); // white's third
+    });
+    // Now black is on move holding three marks, and the hint names the oldest of
+    // them — the first square played, not the lowest-numbered.
+    expect(result.current.vanishingSquares).toEqual(new Set(["0,0"]));
+
+    await act(async () => {
+      await result.current.makeMove({ x: 0, y: 2 }); // black's fourth
+    });
+    // Black's oldest mark is gone, so the queue has moved on and white's own
+    // oldest mark is the one now at stake.
+    expect(result.current.vanishingSquares).toEqual(new Set(["1,0"]));
+  });
+
+  it("stops hinting at a vanishing mark once the game is over", async () => {
+    const { result } = renderHook(() => useGameSession(localSession()));
+
+    // Black completes the top row with its third mark; white plays the bottom
+    // row's first two cells, which is not a line.
+    for (const to of [
+      { x: 0, y: 0 },
+      { x: 0, y: 2 },
+      { x: 1, y: 0 },
+      { x: 1, y: 2 },
+      { x: 2, y: 0 },
+    ]) {
+      await act(async () => {
+        await result.current.makeMove(to);
+      });
+    }
+    expect(result.current.session?.status).toBe("won_black");
+
+    // The winner holds a full set of three, and the board is locked. A ring
+    // still pulsing round one of them would invite a move the session refuses,
+    // so the hint is empty — the same emptiness a locked realtime board gets.
     expect(result.current.isLocked).toBe(true);
+    expect(result.current.vanishingSquares).toEqual(new Set());
   });
 
   it("refuses every move while the session is in conflict", async () => {

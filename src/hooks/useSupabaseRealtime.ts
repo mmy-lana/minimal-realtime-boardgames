@@ -25,6 +25,7 @@ import {
   boardStatesEqual,
   Coordinates,
   GameSession,
+  PlayerColor,
   UniversalBoard,
 } from "@/engine/types";
 import { getSessionEngine, replayMoves } from "@/engine/factory";
@@ -160,7 +161,16 @@ export function useSupabaseRealtime(
 
   const channelRef = useRef<RealtimeChannel | null>(null);
   /** The last board this client proved correct, and the ply it proves to. */
-  const verifiedRef = useRef<{ sessionId: string; ply: number; board: UniversalBoard } | null>(null);
+  // `moves` is part of the baseline, not a convenience. A rule that reads the
+  // move log — Tic-Tac-Toe lifting the oldest of a player's marks — can only be
+  // applied to the next move if the plies behind the baseline are still in
+  // hand, and a baseline that kept only the board would have to guess them.
+  const verifiedRef = useRef<{
+    sessionId: string;
+    ply: number;
+    board: UniversalBoard;
+    moves: { player: PlayerColor; to: Coordinates }[];
+  } | null>(null);
   /**
    * The room's `reset_epoch` as this client last saw it. Moves carry the epoch
    * they were played in, and a reset starts a new log on the same room, so this
@@ -276,7 +286,14 @@ export function useSupabaseRealtime(
         return false;
       }
 
-      verifiedRef.current = { sessionId: session.id, ply: moves.length, board };
+      verifiedRef.current = {
+        sessionId: session.id,
+        ply: moves.length,
+        board,
+        // The same projection `replayMoves` was just given, so the incremental
+        // fold below continues from exactly the log the replay used.
+        moves: moves.map((move) => ({ player: move.player, to: move.to_coord })),
+      };
 
       const next: GameSession = {
         ...session,
@@ -379,13 +396,24 @@ export function useSupabaseRealtime(
       const engine = getSessionEngine(session.gameKind);
       let nextBoard: UniversalBoard;
       try {
+        // The plies already folded in travel with the move. Without them a rule
+        // that needs the log cannot see it, and the board this client holds
+        // stops matching the board every other client and the server hold — at
+        // which point the next legal move looks illegal and the match pauses
+        // itself for no visible reason.
         const applied = engine.applyMove(
           verified.board,
           { to: move.to_coord, ...(move.from_coord ? { from: move.from_coord } : {}) },
-          move.player
+          move.player,
+          { history: verified.moves }
         );
         nextBoard = applied.board;
-        verifiedRef.current = { sessionId: verified.sessionId, ply: move.ply, board: nextBoard };
+        verifiedRef.current = {
+          sessionId: verified.sessionId,
+          ply: move.ply,
+          board: nextBoard,
+          moves: [...verified.moves, { player: move.player, to: move.to_coord }],
+        };
       } catch (error) {
         raiseConflict(
           describeError(error, "An incoming move is not legal for this board, so play is paused.")
@@ -393,7 +421,6 @@ export function useSupabaseRealtime(
         return;
       }
 
-      verifiedRef.current = { sessionId: verified.sessionId, ply: move.ply, board: nextBoard };
       setLastMoveAt(Date.now());
       setStatus((current) => (current === "conflict" ? current : "live"));
       optionsRef.current.onRemoteMove?.(move);

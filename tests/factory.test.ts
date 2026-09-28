@@ -203,6 +203,102 @@ describe("verifyHistory", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts a line long enough to have lifted marks off the board", () => {
+    // Seven plies, so both sides have passed three marks and each has lost one.
+    // This is the first length of game at which the mark that vanishes is
+    // decided by the move log rather than by the board — and therefore the first
+    // length at which live play and the integrity gate can disagree if either
+    // side stops threading the log. A gate that flagged a normal mid-game
+    // session as corrupt would make the game unplayable, so this is asserted
+    // rather than assumed.
+    const session = sessionFor("tictactoe");
+    const engine = getSessionEngine("tictactoe");
+    const to: Coordinates[] = [
+      { x: 2, y: 2 },
+      { x: 0, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 2 },
+      { x: 1, y: 2 },
+    ];
+
+    const history: { player: PlayerColor; to: Coordinates }[] = [];
+    let board = session.boardSnapshot;
+    to.forEach((coord, index) => {
+      const player: PlayerColor = index % 2 === 0 ? "black" : "white";
+      board = engine.applyMove(
+        board,
+        { to: coord },
+        player,
+        { history: history.filter((entry) => entry.player === player) }
+      ).board;
+      history.push({ player, to: coord });
+    });
+
+    session.history = history.map((entry, index) => ({
+      id: `m${index + 1}`,
+      gameId: session.id,
+      ply: index + 1,
+      player: entry.player,
+      to: entry.to,
+      timestamp: index + 1,
+    }));
+    session.boardSnapshot = board;
+
+    // Marks really were lifted, so the fixture is testing what it claims to.
+    const state = board.kind === "tictactoe" ? board.state : [];
+    expect(state.filter((cell) => cell === "black").length).toBe(3);
+    expect(state.filter((cell) => cell === "white").length).toBe(3);
+    expect(verifyHistory(session).ok).toBe(true);
+  });
+
+  it("builds a different board when the move log is withheld", () => {
+    // The control for the test above. Applied without the log, the same move
+    // lifts the lowest-numbered mark instead of the oldest, so the two paths
+    // end on different boards. This is the failure mode threading the log
+    // exists to prevent, and it is silent: both boards look like a legal
+    // position, and the player who loses a mark they expected to keep has no
+    // way to tell which rule ran.
+    const engine = getSessionEngine("tictactoe");
+    // The same seven plies as the test above, so the only difference between the
+    // two runs is whether the log is handed over.
+    const to: Coordinates[] = [
+      { x: 2, y: 2 },
+      { x: 0, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+      { x: 1, y: 0 },
+      { x: 0, y: 2 },
+      { x: 1, y: 2 },
+    ];
+
+    let withLog = engine.createInitialBoard();
+    let withoutLog = engine.createInitialBoard();
+    const history: { player: PlayerColor; to: Coordinates }[] = [];
+    to.forEach((coord, index) => {
+      const player: PlayerColor = index % 2 === 0 ? "black" : "white";
+      withLog = engine.applyMove(withLog, { to: coord }, player, {
+        history: history.filter((entry) => entry.player === player),
+      }).board;
+      withoutLog = engine.applyMove(withoutLog, { to: coord }, player).board;
+      history.push({ player, to: coord });
+    });
+
+    // Named in the assertion, so a failure says which mark each rule lifted
+    // rather than just "the boards differ".
+    const lifted = (board: UniversalBoard, index: number) => {
+      const state = board.kind === "tictactoe" ? board.state : [];
+      return state[index] ?? null;
+    };
+    expect(boardStatesEqual(withLog, withoutLog)).toBe(false);
+    // The log's answer: black's first mark (cell 8) went.
+    expect(lifted(withLog, 8)).toBeNull();
+    // The board-only answer: the lowest-numbered mark (cell 2) went instead.
+    expect(lifted(withoutLog, 8)).toBe("black");
+    expect(lifted(withoutLog, 2)).toBeNull();
+  });
+
   it("reports a divergence when the snapshot does not match the move list", () => {
     const session = sessionFor("tictactoe");
     session.history = [

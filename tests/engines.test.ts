@@ -3,7 +3,11 @@ import {
   applyTicTacToeMove,
   createInitialTicTacToeBoard,
   findTicTacToeWinningLine,
+  getTicTacToeActiveMarks,
   getTicTacToeLegalMoves,
+  getTicTacToeVanishingIndex,
+  TICTACTOE_CELLS,
+  TICTACTOE_MARKS_PER_PLAYER,
   tictactoeCoordOf,
   tictactoeIndexOf,
   validateTicTacToeMove,
@@ -74,6 +78,41 @@ function playTicTacToe(
       applyTicTacToeMove(board, tictactoeIndexOf({ x, y }), player).nextBoard,
     start
   );
+}
+
+/**
+ * Plays a game, threading each side's own placements into the rule exactly the
+ * way the session does, and reports every ply.
+ *
+ * The per-ply record exists because the vanishing mark is a fact about a single
+ * move: "which mark went" is only observable on the move that removed it, not
+ * on the board afterwards, which looks identical either way.
+ */
+function playVanishing(moves: readonly (readonly [number, "black" | "white"])[]) {
+  const history: { player: "black" | "white"; to: Coordinates }[] = [];
+  let board = createInitialTicTacToeBoard();
+
+  const steps = moves.map(([index, player], ply) => {
+    const result = applyTicTacToeMove(
+      board,
+      index,
+      player,
+      history.filter((entry) => entry.player === player).map((entry) => entry.to)
+    );
+    history.push({ player, to: tictactoeCoordOf(index) });
+    board = result.nextBoard;
+    return {
+      ply: ply + 1,
+      index,
+      player,
+      result,
+      board,
+      empty: board.filter((cell) => cell === null).length,
+      occupied: board.filter((cell) => cell !== null).length,
+    };
+  });
+
+  return { steps, board, history };
 }
 
 /** The first cell not belonging to `reserved`, as a stable off-line filler. */
@@ -258,45 +297,200 @@ describe("tic-tac-toe engine", () => {
     expect(findTicTacToeWinningLine(board, 6)).toBeNull();
   });
 
-  it("declares a draw only when the last cell fills a line-free board", () => {
-    // b w b / b w w / w b _ — no three in a row once black takes the last cell.
-    const board = playTicTacToe([
-      [0, 0, "black"],
-      [1, 0, "white"],
-      [2, 0, "black"],
-      [0, 1, "black"],
-      [1, 1, "white"],
-      [2, 1, "white"],
-      [0, 2, "white"],
-      [1, 2, "black"],
-    ]);
-    expect(board.filter((cell) => cell !== null)).toHaveLength(8);
+  it("never reports a draw, because three marks a side cannot fill nine cells", () => {
+    // The old nine-move game ended in a draw when the ninth cell filled a
+    // line-free board. That position is now unreachable: a side is capped at
+    // three marks, so six is the most the board can hold and three cells are
+    // always empty. "Unreachable" is a claim about every ply, so it is asserted
+    // over a long game rather than over one position.
+    // A deterministic sweep — no dice, so a failure is reproducible — played to
+    // its natural end.
+    const history: { player: PlayerColor; to: Coordinates }[] = [];
+    let board = createInitialTicTacToeBoard();
+    let turn: PlayerColor = "black";
+    let scan = 0;
+    let plies = 0;
+    let winner: PlayerColor | null = null;
 
-    const drawn = applyTicTacToeMove(board, tictactoeIndexOf({ x: 2, y: 2 }), "black");
-    expect(drawn.winner).toBeNull();
-    expect(drawn.isDraw).toBe(true);
-    expect(drawn.nextBoard.filter((cell) => cell !== null)).toHaveLength(9);
+    while (plies < 20) {
+      const index = scan % TICTACTOE_CELLS;
+      scan += 1;
+      // A cell held by the other side is simply not ours to take; the sweep
+      // moves on. Occupied cells cannot pile up, because the cap leaves three.
+      if (board[index] !== null) continue;
+      const result = applyTicTacToeMove(
+        board,
+        index,
+        turn,
+        history.filter((entry) => entry.player === turn).map((entry) => entry.to)
+      );
+
+      expect(result.isDraw, `ply ${plies + 1} reported a draw`).toBe(false);
+      expect(
+        result.nextBoard.filter((cell) => cell === turn).length,
+        `ply ${plies + 1} let ${turn} hold more than ${TICTACTOE_MARKS_PER_PLAYER} marks`
+      ).toBeLessThanOrEqual(TICTACTOE_MARKS_PER_PLAYER);
+      // Three cells empty means the board is still playable: no stalemate, and
+      // no position in which the only honest answer is "nobody won".
+      expect(result.nextBoard.filter((cell) => cell === null).length).toBeGreaterThanOrEqual(3);
+
+      board = result.nextBoard;
+      history.push({ player: turn, to: tictactoeCoordOf(index) });
+      if (result.winner) {
+        winner = result.winner;
+        break;
+      }
+      turn = turn === "black" ? "white" : "black";
+      plies += 1;
+    }
+
+    // The payoff: a game of this shape cannot end any other way. The old rules
+    // had a reachable drawn ending; this one ends in a line or it goes on.
+    expect(winner).not.toBeNull();
+    expect(plies).toBeGreaterThanOrEqual(6);
   });
 
-  it("does not call a full board a draw when a line completes on the last cell", () => {
-    // b b _ / b w b / w b w — black takes the top-right cell to close row one.
-    const board = playTicTacToe([
-      [0, 0, "black"],
-      [1, 0, "black"],
-      [0, 1, "black"],
-      [1, 1, "white"],
-      [2, 1, "black"],
-      [0, 2, "white"],
-      [1, 2, "black"],
-      [2, 2, "white"],
+  it("plays a side's first three marks exactly as before the rule existed", () => {
+    // The cap only bites on a fourth mark, so an ordinary opening is untouched:
+    // nothing vanishes and the legal set is simply the cells still empty.
+    const { steps, board } = playVanishing([
+      [0, "black"],
+      [8, "white"],
+      [2, "black"],
+      [6, "white"],
+      [4, "black"],
     ]);
-    expect(board.filter((cell) => cell !== null)).toHaveLength(8);
-    expect(findTicTacToeWinningLine(board, 0)).toBeNull();
 
-    const result = applyTicTacToeMove(board, tictactoeIndexOf({ x: 2, y: 0 }), "black");
-    expect(result.nextBoard.filter((cell) => cell !== null)).toHaveLength(9);
-    expect(result.winner).toBe("black");
-    expect(result.isDraw).toBe(false);
+    for (const step of steps) expect(step.result.vanishedIndex).toBeNull();
+    // b _ b / _ b _ / w _ w
+    expect(board).toEqual([
+      "black", null, "black",
+      null, "black", null,
+      "white", null, "white",
+    ]);
+    expect(getTicTacToeLegalMoves(board)).toHaveLength(4);
+  });
+
+  it("lifts a player's oldest mark when they play a fourth", () => {
+    const { steps, board } = playVanishing([
+      [0, "black"],
+      [8, "white"],
+      [2, "black"],
+      [6, "white"],
+      [4, "black"],
+      [1, "black"],
+    ]);
+
+    const fourth = steps[steps.length - 1]!;
+    // The first mark black ever played, not the lowest number on the board.
+    expect(fourth.result.vanishedIndex).toBe(0);
+    expect(fourth.result.nextBoard[0]).toBeNull();
+    expect(fourth.result.nextBoard[1]).toBe("black");
+    // Still exactly three, and never four: the cap is what the rule exists for.
+    expect(board.filter((cell) => cell === "black")).toHaveLength(TICTACTOE_MARKS_PER_PLAYER);
+    // White is untouched by the other side's vanish.
+    expect(board[8]).toBe("white");
+    expect(board[6]).toBe("white");
+  });
+
+  it("vanishes the oldest mark, not the lowest-indexed one", () => {
+    // The distinction the whole rule turns on. Black plays 8, then 2, then 4,
+    // and a fourth at 0. Cell 8 was played first, so it is the mark that goes —
+    // even though cell 0 is the lowest index and is the cell being played *now*.
+    // An engine that read the board instead of the log would remove cell 0
+    // itself, and the player would watch their first mark survive and their
+    // fourth vanish, which is the bug in a form no test of the win condition
+    // would catch.
+    const { steps } = playVanishing([
+      [8, "black"],
+      [0, "white"],
+      [2, "black"],
+      [1, "white"],
+      [4, "black"],
+      [3, "white"],
+      [5, "black"],
+    ]);
+
+    const fourth = steps[steps.length - 1]!;
+    expect(fourth.result.vanishedIndex).toBe(8);
+    expect(fourth.result.nextBoard[8]).toBeNull();
+    // The mark played *now* survives; the one played first is the one that goes.
+    expect(fourth.result.nextBoard[5]).toBe("black");
+    // And the reading that needs no log would have named cell 2, a mark that
+    // stays put. The two answers differ on this position, which is the point.
+    expect(getTicTacToeVanishingIndex(fourth.result.nextBoard, "black", [0, 2, 4, 5].map(tictactoeCoordOf)))
+      .toBe(2);
+  });
+
+  it("reads the vanishing order from the log, not from the cell numbers", () => {
+    // Both readings are asserted side by side, because they agree on most
+    // positions and only part company here. Given a board alone the engine has
+    // to fall back to index order, which is deterministic but is not the rule;
+    // given the log it lifts the mark that was played first.
+    // w _ b / _ b _ / w _ b — black's three marks are at 2, 4 and 8, and the
+    // log says 8 came first.
+    const history = [tictactoeCoordOf(8), tictactoeCoordOf(2), tictactoeCoordOf(4)];
+    const board: TicTacToeBoard = [
+      "white", null, "black",
+      null, "black", null,
+      "white", null, "black",
+    ];
+
+    expect(getTicTacToeActiveMarks(board, "black", history)).toEqual([8, 2, 4]);
+    expect(getTicTacToeVanishingIndex(board, "black", history)).toBe(8);
+    // Handed the same board and no log, the engine must still answer with a
+    // mark — but cell 2, the lowest index, which is not the mark the log names.
+    // The fallback exists so a bare rule call stays total; every path in the
+    // app passes the log, and this assertion is what would notice if one forgot.
+    expect(getTicTacToeVanishingIndex(board, "black")).toBe(2);
+  });
+
+  it("keeps the queue moving past a player's fifth mark", () => {
+    // Five placements for a side. The first is lifted by the fourth and the
+    // second by the fifth, so the mark that goes is the second one played — a
+    // queue that reset each turn would lift the wrong square from here on.
+    const { steps, board } = playVanishing([
+      [8, "black"],
+      [1, "white"],
+      [2, "black"],
+      [3, "white"],
+      [4, "black"],
+      [5, "white"],
+      [0, "black"],
+      [7, "white"],
+      [6, "black"],
+    ]);
+
+    // Black's fourth mark is his sixth ply, his fifth is his ninth.
+    const fourth = steps[6]!;
+    const fifth = steps[8]!;
+    expect(fourth.result.vanishedIndex).toBe(8);
+    expect(fifth.result.vanishedIndex).toBe(2);
+    expect(board[8]).toBeNull();
+    expect(board[2]).toBeNull();
+    expect(board.filter((cell) => cell === "black")).toHaveLength(TICTACTOE_MARKS_PER_PLAYER);
+  });
+
+  it("decides a win on a board that has just lost a mark", () => {
+    // Black holds 4, 6 and 8 — no line, and no line can exist: 4 is opposite 6
+    // and 8. Playing 7 is a fourth mark, so black's own first mark comes off the
+    // board, and the bottom row is then a line of three. The vanish happens
+    // first, so a win has to be read off the board the move really produced.
+    const { steps } = playVanishing([
+      [4, "black"],
+      [0, "white"],
+      [6, "black"],
+      [1, "white"],
+      [8, "black"],
+      [3, "white"],
+      [7, "black"],
+    ]);
+
+    const last = steps[steps.length - 1]!;
+    expect(last.result.vanishedIndex).toBe(4);
+    expect(last.result.winner).toBe("black");
+    expect(last.result.isDraw).toBe(false);
+    expect(findTicTacToeWinningLine(last.result.nextBoard, 7)).toEqual([6, 7, 8]);
   });
 
   it("keeps the filler cell off the winning line", () => {

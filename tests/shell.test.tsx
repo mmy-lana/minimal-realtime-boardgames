@@ -3,7 +3,7 @@
  */
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GameKind, PlayerColor } from "@/engine/types";
+import type { Coordinates, GameKind, PlayerColor } from "@/engine/types";
 import { coordKey } from "@/components/boards/boardViewTypes";
 
 /**
@@ -584,6 +584,91 @@ describe("board sizing", () => {
     unmount();
   });
 
+  it("rings the one Tic-Tac-Toe mark the next move will lift", async () => {
+    const { TicTacToeBoardView } = await import("@/components/boards/TicTacToeBoardView");
+    // The complaint: a fourth mark makes your first mark disappear, and with
+    // nothing on the board to say so the player reads it as a bug in the app
+    // rather than as the rule. The mark at stake is named before the move.
+    const engine = getSessionEngine("tictactoe");
+    const to: Coordinates[] = [
+      { x: 2, y: 2 },
+      { x: 0, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+      { x: 1, y: 0 },
+    ];
+    let board = engine.createInitialBoard();
+    const history: { player: PlayerColor; to: Coordinates }[] = [];
+    for (const [ply, coord] of to.entries()) {
+      const player: PlayerColor = ply % 2 === 0 ? "black" : "white";
+      board = engine.applyMove(
+        board,
+        { to: coord },
+        player,
+        { history: history.filter((entry) => entry.player === player) }
+      ).board;
+      history.push({ player, to: coord });
+    }
+    // Black now holds 2, 4 and 8, and 8 was played first.
+    const { container, unmount } = render(
+      <TicTacToeBoardView
+        board={board}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        vanishingSquares={new Set(["2,2"])}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Tic-Tac-Toe board"
+        size="md"
+      />
+    );
+
+    // Exactly one ring: the mark named by the session, and no other.
+    const rings = container.querySelectorAll("[data-vanishing-mark]");
+    expect(rings).toHaveLength(1);
+    const ring = rings[0] as HTMLElement;
+    // Inside the square, so it cannot spill over a grid line and read as a
+    // border on the cell next to it.
+    expect(ring.className).toMatch(/inset-/);
+    // Dashed, not solid: a solid border looks like a permanent state, a
+    // provisional one looks temporary — which is what it is.
+    expect(ring.className).toMatch(/border-dashed/);
+    // The pulse is the visual half of the warning, and it respects a player who
+    // has asked the system for less motion.
+    expect(ring.className).toMatch(/motion-safe:/);
+    // The tile says it in words too, for a player who cannot see the dash.
+    const tile = ring.closest("[data-board-surface]") as HTMLElement;
+    expect(tile.getAttribute("aria-label")).toContain("lifts off the board");
+    unmount();
+  });
+
+  it("rings nothing when the view is not told a mark is at stake", async () => {
+    const { TicTacToeBoardView } = await import("@/components/boards/TicTacToeBoardView");
+    const { container, unmount } = render(
+      <TicTacToeBoardView
+        board={getSessionEngine("tictactoe").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        vanishingSquares={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Tic-Tac-Toe board"
+        size="md"
+      />
+    );
+
+    // The session hands every board the same field, empty in every other game.
+    // A view that rang something here would be inventing a rule it does not have.
+    expect(container.querySelectorAll("[data-vanishing-mark]")).toHaveLength(0);
+    unmount();
+  });
+
   it("marks a lifted checker with an inset ring, not a repainted square", async () => {
     const { CheckersBoardView } = await import("@/components/boards/CheckersBoardView");
     const engine = getSessionEngine("checkers");
@@ -943,7 +1028,7 @@ describe("board sizing", () => {
       />
     );
 
-    const edges = ["black-top", "black-bottom", "white-left", "white-right"];
+    const edges = ["black-top", "black-bottom", "white-left", "white-right"] as const;
     // Each caption is placed in the board's own grid: the two Black ones above
     // and below the playfield, the two White ones either side of it. A caption
     // that drifted into a corner would still read correctly and still point at

@@ -140,6 +140,7 @@ export function GameScreen({
     selectableSquares,
     legalSquares,
     destinations,
+    vanishingSquares,
     lastMove,
     rejectionMessage,
     isLocked,
@@ -216,6 +217,9 @@ export function GameScreen({
       legalSquares,
       selectableSquares,
       destinations,
+      // Tic-Tac-Toe is the only view that reads this; the rest ignore an empty
+      // set rather than each having to branch on the game kind.
+      vanishingSquares,
       lastMove: lastMove ? { from: lastMove.from ?? null, to: lastMove.to } : null,
       disabled: isLocked || locked,
       onSquareActivate,

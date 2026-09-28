@@ -43,6 +43,10 @@ import {
   replayMoves,
   SessionEngine,
 } from "@/engine/factory";
+import {
+  getTicTacToeVanishingIndex,
+  tictactoeCoordOf,
+} from "@/engine/rules/tictactoe";
 import { createId, describeError } from "@/lib/utils";
 import { isLocalDbAvailable, putSession } from "@/lib/db";
 import { createSyncQueueItem, dispatchMoveMutation, type FlushSummary } from "@/lib/sync";
@@ -116,6 +120,17 @@ export interface UseGameSessionResult {
   readonly selectableSquares: ReadonlySet<string>;
   readonly legalSquares: ReadonlySet<string>;
   readonly destinations: ReadonlySet<string>;
+  /**
+   * The mark of `activeSeat`'s that the next move will lift off the board.
+   *
+   * Exactly one square, and only in Tic-Tac-Toe: a player there may hold three
+   * marks, and playing a fourth removes the oldest. A rule that removes a piece
+   * without saying which one is a rule that looks like a bug, so the board
+   * marks the piece in question. Empty whenever the seat is not holding a full
+   * set, whenever the board is locked, and in every other game — the field is
+   * empty rather than absent so no view has to ask which kind it is looking at.
+   */
+  readonly vanishingSquares: ReadonlySet<string>;
   /** The last accepted move, highlighted on the board. */
   readonly lastMove: MoveRecord | null;
   readonly isThinking: boolean;
@@ -241,6 +256,24 @@ export function useGameSession(
     if (isLocked || !selected) return new Set();
     return toKeySet(engine.getDestinations(board, selected, activeSeat));
   }, [engine, board, selected, activeSeat, isLocked]);
+
+  /**
+   * The mark `activeSeat` is about to lose, derived through the rule itself
+   * rather than recomputed here: the same call the engine makes when it lifts
+   * the mark, so the highlighted mark and the mark that actually disappears
+   * cannot disagree. Locked boards get nothing — the hint is about a move the
+   * viewer cannot make.
+   */
+  const vanishingSquares = useMemo<ReadonlySet<string>>(() => {
+    if (!session || isLocked) return new Set();
+    if (engine.kind !== "tictactoe" || board.kind !== "tictactoe") return new Set();
+    const vanishing = getTicTacToeVanishingIndex(
+      assertBoardSnapshot(board, "tictactoe").state,
+      activeSeat,
+      session.history.filter((record) => record.player === activeSeat).map((record) => record.to)
+    );
+    return vanishing === null ? new Set() : new Set([coordKey(tictactoeCoordOf(vanishing))]);
+  }, [session, isLocked, engine, board, activeSeat]);
 
   const lastMove = session?.history.length ? (session.history[session.history.length - 1] ?? null) : null;
 
@@ -389,7 +422,13 @@ export function useGameSession(
 
       let outcome: ReturnType<SessionEngine["applyMove"]>;
       try {
-        outcome = currentEngine.applyMove(active.boardSnapshot, move, mover);
+        // The move log travels with the move. Tic-Tac-Toe lifts a player's
+        // oldest mark when they play a fourth, and "oldest" is an order the
+        // nine-cell snapshot cannot record — so the rule is handed the same log
+        // the integrity gate replays, and both arrive at the same board.
+        outcome = currentEngine.applyMove(active.boardSnapshot, move, mover, {
+          history: active.history,
+        });
       } catch (error) {
         return reject("illegal-move", describeError(error, "That move is not allowed."));
       }
@@ -601,6 +640,7 @@ export function useGameSession(
     selected,
     selectableSquares,
     legalSquares,
+    vanishingSquares,
     destinations,
     lastMove,
     isThinking,

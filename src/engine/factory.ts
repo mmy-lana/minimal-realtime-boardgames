@@ -114,6 +114,29 @@ export interface EngineMoveResult {
 }
 
 /**
+ * What the caller knows about the game that the board alone does not.
+ *
+ * Today exactly one rule needs it: Tic-Tac-Toe lifts a player's oldest mark
+ * when they play a fourth, and "oldest" is a fact about the *order* the marks
+ * were played, which a flat nine-cell snapshot cannot record — cell 0 is the
+ * oldest mark only if that player played it first. The move log is the only
+ * place that order exists, so it is passed in rather than guessed at from the
+ * board.
+ *
+ * Both callers supply it, and that is the point: a live move and the same move
+ * replayed from the log must produce the same board, or Section 4.4's integrity
+ * gate would reject every match that reached a fourth mark. Engines that do not
+ * need it ignore the field.
+ */
+export interface ApplyMoveContext {
+  /** Moves already played in this game, oldest first. */
+  readonly history?: readonly {
+    readonly player: PlayerColor;
+    readonly to: Coordinates;
+  }[];
+}
+
+/**
  * Uniform contract implemented by all six games.
  *
  * Board arguments are the tagged {@link UniversalBoard} union rather than a
@@ -147,11 +170,18 @@ export interface SessionEngine {
     player: PlayerColor
   ): readonly Coordinates[];
 
-  /** Applies a normalized move. Throws when the move is illegal. */
+  /**
+   * Applies a normalized move. Throws when the move is illegal.
+   *
+   * `context` carries what the board cannot — today, the move log the vanishing
+   * rule needs. Omitting it is legal: the engine falls back to a deterministic
+   * reading of the board, and every caller inside the app passes it.
+   */
   applyMove(
     board: UniversalBoard,
     move: NormalizedMove,
-    player: PlayerColor
+    player: PlayerColor,
+    context?: ApplyMoveContext
   ): EngineMoveResult;
 
   /** Human-readable label for a move, used by the history timeline. */
@@ -176,12 +206,25 @@ const ticTacToeEngine: SessionEngine = {
 
   getDestinations: () => [],
 
-  applyMove: (board, move, player) => {
+  applyMove: (board, move, player, context) => {
     const state = assertBoardSnapshot(board, "tictactoe").state;
-    const result = applyTicTacToeMove(state, tictactoeIndexOf(move.to), player);
+    // The player's own placements, oldest first. The log is filtered down to this
+    // player here so the rule itself only ever sees "your marks, in order" and
+    // never has to reason about whose turn anybody else's move was.
+    const playerHistory = context?.history
+      ?.filter((entry) => entry.player === player)
+      .map((entry) => entry.to);
+    const result = applyTicTacToeMove(
+      state,
+      tictactoeIndexOf(move.to),
+      player,
+      playerHistory
+    );
     return {
       board: { kind: "tictactoe", state: result.nextBoard },
       winner: result.winner,
+      // A constant rather than a check: three marks a side can never fill nine
+      // cells, so this game has no draw to detect.
       isDraw: result.isDraw,
       passesTurn: false,
     };
@@ -420,6 +463,12 @@ export function replayMoves(
   let expectedPlayer: PlayerColor = "black";
   let winner: PlayerColor | null = null;
   let isDraw = false;
+  // The plies replayed so far, handed to each engine as its context. A rule
+  // that reads the log — Tic-Tac-Toe's vanishing order — has to read *this*
+  // log, the one being replayed, and not a stale or empty one: the replay has
+  // to reach the same board the live game did, or the integrity gate would
+  // reject every match that reached a fourth mark.
+  const applied: { player: PlayerColor; to: Coordinates }[] = [];
 
   for (let index = 0; index < moves.length; index += 1) {
     const move = moves[index];
@@ -437,7 +486,12 @@ export function replayMoves(
 
     let result: EngineMoveResult;
     try {
-      result = engine.applyMove(current, { from: move.from, to: move.to }, move.player);
+      result = engine.applyMove(
+        current,
+        { from: move.from, to: move.to },
+        move.player,
+        { history: applied }
+      );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new Error(
@@ -445,6 +499,7 @@ export function replayMoves(
       );
     }
 
+    applied.push({ player: move.player, to: move.to });
     current = result.board;
     winner = result.winner;
     isDraw = result.isDraw;

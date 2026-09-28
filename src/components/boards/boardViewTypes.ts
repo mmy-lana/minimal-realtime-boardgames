@@ -33,6 +33,13 @@ export interface BoardViewProps {
   readonly destinations: ReadonlySet<string>;
   /** The most recent move, for the highlight. */
   readonly lastMove: { readonly from: Coordinates | null; readonly to: Coordinates } | null;
+  /**
+   * The mark the next move will remove, as `"x,y"`. At most one square, and
+   * empty in every game but Tic-Tac-Toe, where a player may hold only three
+   * marks and a fourth lifts the oldest. A view that does not implement the
+   * rule simply ignores it.
+   */
+  readonly vanishingSquares?: ReadonlySet<string>;
   /** Blocks every interaction, e.g. while the turn is not the local player's. */
   readonly disabled: boolean;
   /** Called with the square the user activated. */

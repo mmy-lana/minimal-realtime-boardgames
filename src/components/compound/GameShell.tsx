@@ -65,6 +65,7 @@ const GAME_RULES: Record<GameKind, { objective: string; steps: string[] }> = {
     steps: [
       "Player 1 plays Black (X); Player 2 plays White (O).",
       "Click any empty square to place your mark.",
+      "You may hold only three marks at a time: your fourth mark lifts your oldest one off the board, which is why this game never ends in a draw.",
       "The first player to complete a line of three wins.",
     ],
   },

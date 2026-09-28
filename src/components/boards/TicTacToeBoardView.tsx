@@ -15,6 +15,13 @@
  * a ratio rather than in pixels means one number describes every viewport, and
  * the mark is always the same weight relative to the square holding it.
  *
+ * A player holds at most three marks, and a fourth lifts the oldest off the
+ * board. The mark that is about to go is ringed, because a rule that removes a
+ * piece without saying which one is a rule that reads as a bug: the player
+ * watches their own X disappear and has no idea it was ever at stake. The ring
+ * is dashed because it marks a mark as *provisional*, and it pulses only when
+ * the viewer has asked for motion.
+ *
  * The colours are literal hexes on purpose. The marks used to be
  * `board-dark` and `board-light`, which is a token pair chosen to contrast with
  * a *page* background — and this board's cells are `neutral-100`, a light
@@ -63,6 +70,18 @@ const X_COLOR = "#111827";
 const O_COLOR = "#DC2626";
 
 /**
+ * The ring around a mark the next move will lift.
+ *
+ * `neutral-500` at 70% clears 3:1 against a `neutral-100` cell, which is what a
+ * non-text indicator needs, and it is the same grey on both marks so the ring
+ * never reads as part of the mark itself. `motion-safe` because a pulsing ring
+ * on a board that sits still otherwise is exactly the kind of motion a player
+ * turns on at the OS level and then finds waiting for them here.
+ */
+const VANISHING_RING =
+  "pointer-events-none absolute inset-[6%] rounded-lg border-2 border-dashed border-neutral-500/70 motion-safe:animate-pulse";
+
+/**
  * An X or an O, drawn in a 100x100 viewBox and scaled by its cell.
  *
  * The `X` is two strokes and the `O` is a stroked ring rather than a filled
@@ -97,6 +116,7 @@ export function TicTacToeBoardView({
   selectableSquares,
   destinations,
   lastMove,
+  vanishingSquares,
   disabled,
   onSquareActivate,
   label,
@@ -141,13 +161,14 @@ export function TicTacToeBoardView({
         const x = index % TICTACTOE_SIZE;
         const coord: Coordinates = { x, y };
         const role = roles.get(coordKey(coord)) ?? "plain";
+        const isVanishing = cell !== null && (vanishingSquares?.has(coordKey(coord)) ?? false);
 
         return (
           <BoardTile
             key={coordKey(coord)}
             label={`Square ${formatCoordinate(coord.x, coord.y)}${
               cell ? `, ${cell === "black" ? "black" : "white"} mark` : ", empty"
-            }`}
+            }${isVanishing ? ", lifts off the board if you play another mark" : ""}`}
             size={size}
             disabled={disabled}
             selected={role === "selected"}
@@ -167,6 +188,15 @@ export function TicTacToeBoardView({
             )}
           >
             {cell !== null ? <Marker color={cell} /> : null}
+            {/* A sibling of the mark, not a wrapper around it: BoardTile already
+                centres its children, and a wrapper would have to re-create that
+                centring to avoid shifting the mark inside its cell. The ring is
+                inert decoration, so it stays out of the accessible tree — the
+                tile's own label carries the warning in words, for anyone who
+                cannot see the dash. */}
+            {isVanishing ? (
+              <span aria-hidden="true" data-vanishing-mark="" className={VANISHING_RING} />
+            ) : null}
           </BoardTile>
         );
       })}

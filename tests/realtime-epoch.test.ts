@@ -282,6 +282,46 @@ describe("SEC-AUDIT-01: the client reads one epoch of the move log", () => {
     expect(onRemoteMove.mock.calls[0]?.[0]?.id).toBe("new-1");
   });
 
+  it("folds a remote move onto the same board the server replayed, marks and all", async () => {
+    // Six plies, so black holds three marks — 2, 4 and 8, with 8 played first.
+    // The baseline came from `replayMoves`, which knows the rule takes the
+    // *oldest* mark; the incremental fold for the next incoming move has to know
+    // it too. A fold that did not would lift cell 2 — the lowest-numbered black
+    // mark — and keep cell 8 occupied by a mark the rule had already removed.
+    //
+    // The symptom is invisible on the move that causes it and unmistakable on the
+    // next one: the wrong board says cell 8 is taken, so a perfectly legal white
+    // move there is rejected and the match declares a conflict with nothing on
+    // screen to explain it.
+    const line = [8, 0, 2, 1, 4, 3];
+    moveRows = line.map((index, turn) =>
+      moveRow({
+        id: `m-${turn}`,
+        epoch: 0,
+        ply: turn + 1,
+        player: turn % 2 === 0 ? "black" : "white",
+        index,
+      })
+    );
+
+    const { result, onConflict, onRemoteMove } = renderHookFor(line);
+    await waitFor(() => expect(result.current.isVerified).toBe(true));
+    expect(onConflict).not.toHaveBeenCalled();
+
+    // Black's fourth mark. It lifts black's oldest mark, cell 8, and takes 6.
+    emit("game_moves", "INSERT", moveRow({ id: "m-7", epoch: 0, ply: 7, player: "black", index: 6 }));
+    expect(onRemoteMove).toHaveBeenCalledTimes(1);
+    expect(onConflict).not.toHaveBeenCalled();
+
+    // Cell 8 is empty again, so white may claim it. On a baseline that lost the
+    // move log this cell still holds black's first mark and this move is
+    // rejected as illegal.
+    emit("game_moves", "INSERT", moveRow({ id: "m-8", epoch: 0, ply: 8, player: "white", index: 8 }));
+    expect(onRemoteMove).toHaveBeenCalledTimes(2);
+    expect(onConflict).not.toHaveBeenCalled();
+    expect(result.current.isVerified).toBe(true);
+  });
+
   it("drops the proven baseline when a reset advances the epoch", async () => {
     roomRow = { id: "room-1", reset_epoch: 0 };
     moveRows = FIRST_GAME.map((index, turn) =>
