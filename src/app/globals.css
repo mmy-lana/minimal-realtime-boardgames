@@ -128,7 +128,7 @@
     display: none;
   }
 
-  /* Dotted paper backdrop for dark squares on checkers/chess/reversi. */
+  /* Dotted paper backdrop for dark squares on checkers and reversi. */
   .board-cell-dark {
     background-color: var(--color-board-subtle);
   }

@@ -349,7 +349,7 @@ export function useGameSession(
             );
 
       // Selecting a piece, switching which one is lifted, and putting the one
-      // down again are all ordinary parts of playing Checkers or Chess. None of
+      // down again are all ordinary parts of playing Checkers or Reversi. None of
       // them is a move, none of them is an error, and none of them should reach
       // the engine — an engine that is handed a move with no origin throws
       // "an origin square is required", which is how a routine tap ended up
@@ -647,7 +647,7 @@ type ClickIntent =
  *     move was the "an origin square is required" banner.
  *  4. For a **movement game**, a tap with nothing lifted on a square the player
  *     does not own is a no-op. There is no such thing as "put a piece down
- *     here" in checkers or chess, so the tap was not a move attempt at all —
+ *     here" in checkers or reversi, so the tap was not a move attempt at all —
  *     it was someone touching the board. Handing it to the engine anyway
  *     produced the single most confusing message in the app: *"an origin
  *     square is required"*, which describes a protocol detail and tells the

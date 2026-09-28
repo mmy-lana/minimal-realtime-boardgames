@@ -35,7 +35,8 @@ export interface BoardTileProps
   /**
    * Replaces the selection ring outright — it is not merged with the default.
    *
-   * Checkers wants an amber ring at a different weight; chess wants a gold one.
+   * Checkers wants an amber ring at a different weight; Hex wants an inset one
+   * that does not fight the stone sitting on top of it.
    * Both used to be passed through `className`, which leaves two `ring-*`
    * utilities on one element, and the winner is decided by stylesheet order
    * rather than by intent — so a selection ring could appear on some viewports
@@ -44,8 +45,8 @@ export interface BoardTileProps
   selectedRingClass?: string;
   /**
    * Replaces the legal-target marker outright, for the same reason as
-   * `selectedRingClass`. Chess wants a filled green dot; Reversi wants a ghost
-   * disc.
+   * `selectedRingClass`. Reversi wants a ghost disc; Checkers wants a filled
+   * dot.
    *
    * **Every utility must carry the `after:` prefix.** These classes go onto the
    * marker's pseudo-element, but the component emits them verbatim, and a
@@ -64,7 +65,7 @@ export interface BoardTileProps
  *
  * The old values (`size-[22px]`, `size-8`, `size-11`) were *fixed*, so a board
  * was exactly as big as its cell preset no matter how much room the layout had
- * — which is what made a Chess board render as a postage stamp inside an
+ * — which is what made a Gomoku grid render as a postage stamp inside an
  * unbounded viewport. Making the preset a floor instead means one board
  * definition serves a 360px phone and a 4K display, and the floor still keeps a
  * cell from collapsing below a usable tap size on a dense grid.

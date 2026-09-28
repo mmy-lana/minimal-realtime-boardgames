@@ -113,19 +113,11 @@ export function formatCoordinate(x: number, y: number): string {
   return `${x},${y}`;
 }
 
-const CHESS_FILES = "abcdefgh";
-
-/** Algebraic square notation, e.g. `formatSquare(0, 0)` -> `"a8"`. */
-export function formatSquare(x: number, y: number): string {
-  const file = CHESS_FILES[x] ?? String(x);
-  const rank = 8 - y;
-  return `${file}${rank >= 1 ? rank : 0}`;
-}
-
 /**
- * Generalised grid notation for boards that are not 8x8, used by Tic-Tac-Toe,
- * Gomoku, Reversi and Checkers. Files run `A`..`Z` left to right and ranks
- * count up from the bottom row, so `formatGridSquare(1, 0, 15)` -> `"B15"`.
+ * Generalised grid notation for every board that is not 8x8-specific, used by
+ * Tic-Tac-Toe, Gomoku, Reversi, Checkers and Hex. Files run `A`..`Z` left to
+ * right and ranks count up from the bottom row, so
+ * `formatGridSquare(1, 0, 15)` -> `"B15"`.
  */
 export function formatGridSquare(x: number, y: number, size: number): string {
   const file = x >= 0 && x < 26 ? String.fromCharCode(65 + x) : String(x);

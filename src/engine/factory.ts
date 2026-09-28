@@ -3,10 +3,10 @@
  *
  * The six rule engines are pure and idiomatic in their own terms, but they
  * disagree about how a move is addressed: Tic-Tac-Toe takes a flat index,
- * Connect Four a column, Gomoku and Reversi a coordinate, Checkers and Chess a
- * from/to pair. Every layer above the engines — the session hook, the board
- * views, the history timeline, and the reconnect replay — would otherwise have
- * to branch on `gameKind`.
+ * Connect Four a column, Gomoku and Reversi a coordinate, Checkers a from/to
+ * pair and Hex a bare destination. Every layer above the engines — the session
+ * hook, the board views, the history timeline, and the reconnect replay — would
+ * otherwise have to branch on `gameKind`.
  *
  * This module erases that difference behind one interface. A single
  * {@link NormalizedMove} shape is the only move representation that ever
@@ -37,7 +37,7 @@ import type {
   UniversalBoard,
 } from "@/engine/types";
 import { assertBoardSnapshot, opponentOf } from "@/engine/types";
-import { formatGridSquare, formatSquare } from "@/lib/utils";
+import { formatGridSquare } from "@/lib/utils";
 
 import {
   applyTicTacToeMove,

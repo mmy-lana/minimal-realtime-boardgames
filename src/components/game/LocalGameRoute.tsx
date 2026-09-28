@@ -4,8 +4,9 @@
  * Client half of the local route: resolve-or-create, then render.
  *
  * A local match is resumed when one exists and created when none does, so the
- * browser can close and reopen `/chess` without losing the board. The lookup
- * runs against IndexedDB only, which is what makes a local match local.
+ * browser can close and reopen `/<gameKind>` — `/checkers`, `/hex` — without
+ * losing the board. The lookup runs against IndexedDB only, which is what
+ * makes a local match local.
  *
  * Three states are real and each is rendered rather than hidden behind a
  * spinner: resolving, ready, and unresolvable. A `?session=` id that matches

@@ -7,7 +7,7 @@
  * white on the right. That is the shape a player expects from a notation chart,
  * and it halves the scroll height on a phone.
  *
- * The notation comes from the engine's own `formatMove`, so chess reads `e2-e4`
+ * The notation comes from the engine's own `formatMove`, so checkers reads `B6`
  * and Gomoku reads `H8` without this component knowing which game it is
  * showing. A pass — the ply Reversi produces when a player has no legal move —
  * is labelled explicitly rather than being rendered as an empty cell, because
