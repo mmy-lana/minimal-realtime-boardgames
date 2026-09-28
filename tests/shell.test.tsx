@@ -602,7 +602,13 @@ describe("board sizing", () => {
       ["connect4", "7 / 6"],
       ["tictactoe", "1 / 1"],
       ["checkers", "1 / 1"],
-      ["hex", "1 / 1"],
+      // Hex is the second non-square board, and for the same reason. Its
+      // playfield is 7 cells plus the 6 half-cell offsets the last row
+      // accumulates — 10 cell-widths across, 7 down. A square frame left
+      // roughly 200px of dead vertical space between the last row and the
+      // bottom goal rail, which read as a gap *in* the board rather than slack
+      // around it.
+      ["hex", "10 / 7"],
       ["reversi", "1 / 1"],
       ["gomoku", "1 / 1"],
     ] as const) {

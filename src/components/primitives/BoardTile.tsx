@@ -79,6 +79,16 @@ export interface BoardTileProps
    * a view whose marker is written this way.
    */
   targetDotClass?: string;
+  /**
+   * Replaces the hover wash outright, for the same reason as
+   * `selectedRingClass`. The default is deliberately almost invisible
+   * (`board-subtle` on a `board-light` cell), which reads as "the board is
+   * inert" on a dense grid. Hex needs a wash it can actually see, and writing
+   * a second `hover:bg-*` through `className` would leave two on one element
+   * with the winner decided by stylesheet order. A prop can only take the one
+   * value it is given.
+   */
+  hoverWashClass?: string;
   children?: React.ReactNode;
 }
 
@@ -159,6 +169,7 @@ export function BoardTile({
   emphasis = "none",
   selectedRingClass,
   targetDotClass,
+  hoverWashClass,
   className,
   children,
   onContextMenu,
@@ -218,7 +229,10 @@ export function BoardTile({
         shape === "circle" ? "rounded-full" : "rounded-none",
         SIZE_CLASSES[size],
         ringClass,
-        "hover:bg-board-subtle/60",
+        // Exactly one hover wash, chosen here for the same reason the ring is.
+        // A disabled tile still opts out, below: a locked board must not invite
+        // a click by lighting up under the pointer.
+        hoverWashClass ?? "hover:bg-board-subtle/60",
         "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-board-dark",
         "disabled:cursor-not-allowed disabled:hover:bg-transparent",
         // A legal destination is a dot painted on top of the tile, drawn with

@@ -773,18 +773,87 @@ describe("BoardTile target markers", () => {
       );
       // What matters is not the exact list — the size preset differs per view —
       // but that every tile agrees on it. A marker that added a border to one
-      // square would show up as a tile that disagrees with its neighbours.
+      // square would show up as a tile that disagrees with its neighbours, which
+      // is what the size check above catches.
       const boxModels = new Set(
         [...container.querySelectorAll("[data-board-surface]")].map((tile) =>
           (tile as HTMLElement).className.split(/\s+/).filter((t) => boxModel.test(t)).sort().join(" ")
         )
       );
       expect(boxModels.size, `${name} tiles must all share one box model`).toBe(1);
-      for (const model of boxModels) {
-        expect(model.split(" ").filter((t) => t.startsWith("border")), `${name} must have no tile border`).toEqual([]);
+      // Reversi's grid is drawn by the gap between cells, so a border on a tile
+      // there would double the line and shrink the cell. Hex is the opposite
+      // case: the cells sit on a white canvas with no grid behind them, so the
+      // border IS the grid and its absence made 40-odd empty cells invisible.
+      // The border is therefore per-view, and the invariant that covers both is
+      // the uniformity one above — a border that reached only some tiles would
+      // have shown up there.
+      if (name === "Reversi") {
+        for (const model of boxModels) {
+          expect(model.split(" ").filter((t) => t.startsWith("border")), "Reversi must have no tile border").toEqual([]);
+        }
       }
       unmount();
     }
+  });
+
+  it("gives every Hex cell a visible boundary, filled or empty", async () => {
+    // The board is 49 near-white discs on a white canvas. A disc with a
+    // transparent background and no border is not a subtle cell, it is absent,
+    // and all 40-odd empty ones vanished together — hiding the entire legal
+    // move set behind what looked like a blank rhombus.
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
+    const { HEX_SIZE } = await import("@/engine/rules/hex");
+
+    const { container, unmount } = render(
+      <HexBoardView
+        board={getSessionEngine("hex").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set(["0,0"])}
+        selectableSquares={new Set<string>()}
+        destinations={new Set(["0,0"])}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Hex board"
+        size="sm"
+      />
+    );
+
+    const cells = [...container.querySelectorAll("[data-board-surface]")];
+    expect(cells).toHaveLength(HEX_SIZE * HEX_SIZE);
+
+    // Every cell, not a sample: a rule that styled only the first row would
+    // still light up 7 cells on an otherwise blank board.
+    for (const cell of cells) {
+      const classes = (cell as HTMLElement).className.split(/\s+/);
+      expect(classes, "every Hex cell needs a border").toContain("border");
+      expect(classes, "every Hex cell needs a background").toContain("bg-neutral-100/80");
+      expect(classes, "every Hex cell is a disc").toContain("rounded-full");
+    }
+    unmount();
+  });
+
+  it("reserves a 10:7 stage for Hex and a square for the square boards", async () => {
+    // The frame has to reserve the playfield's ratio BEFORE the board is
+    // measured, so the two cannot drift. A square frame around the 10:7 rhombus
+    // left roughly 200px of dead vertical space between the last row and the
+    // bottom goal rail, which read as a gap in the board rather than slack
+    // around it. The per-kind table itself is asserted in shell.test.tsx; this
+    // is the Hex side of the same contract, pinned to the view that needs it.
+    const { BoardStage } = await import("@/components/compound/BoardStage");
+
+    const { container, unmount } = render(
+      <BoardStage gameKind="hex" size="md" isDesktop={false}>
+        <div>board</div>
+      </BoardStage>
+    );
+    const stage = container.querySelector('[data-board-stage="hex"]') as HTMLElement;
+    expect(stage, "Hex must render a stage").not.toBeNull();
+    // jsdom does not resolve `aspect-ratio` from a stylesheet, so the inline
+    // style is the contract — which is exactly why the ratio is set inline.
+    expect(stage.style.aspectRatio).toBe("10 / 7");
+    unmount();
   });
 });
 

@@ -69,9 +69,20 @@ export interface BoardStageProps {
  * The frame's aspect ratio, per kind.
  *
  * One entry, read in one place, so that the ratio a board draws itself at and
- * the ratio the space was reserved for cannot drift apart. Only Connect Four
- * departs from the square: its playfield is seven cells wide by six tall, and
- * every other board is either a square grid or a rhombus that fits inside one.
+ * the ratio the space was reserved for cannot drift apart. Three boards depart
+ * from the square, and each for a stated reason:
+ *
+ *  - Connect Four is `7 / 6`: seven cells wide by six tall, so a square frame is
+ *    a sixth of wasted height on every screen — on a 360x640 phone the
+ *    difference between a board that fits and one that pushes the score cards
+ *    off.
+ *  - Hex is `10 / 7`: the rhombus is seven cells plus the six half-cell offsets
+ *    the last row accumulates, so the playfield is 10 cell-widths across and 7
+ *    down. A square frame here is the same bug with a different number — it left
+ *    roughly 200px of dead vertical space between the last row and the bottom
+ *    goal rail, which read as the board having a gap in it rather than as slack
+ *    around it.
+ *  - The rest are square grids.
  */
 const STAGE_ASPECT_RATIO: Readonly<Record<GameKind, string>> = {
   tictactoe: "1 / 1",
@@ -79,7 +90,7 @@ const STAGE_ASPECT_RATIO: Readonly<Record<GameKind, string>> = {
   gomoku: "1 / 1",
   reversi: "1 / 1",
   checkers: "1 / 1",
-  hex: "1 / 1",
+  hex: "10 / 7",
 };
 
 export function BoardStage({

@@ -48,6 +48,7 @@ import {
   applyHexMove,
   checkHexWin,
   createInitialHexBoard,
+  findHexWinningPath,
   getHexLegalMoves,
   HEX_DIRECTIONS,
   HEX_SIZE,
@@ -1610,6 +1611,100 @@ describe("hex engine", () => {
     const board = hexPosition(triples);
     expect(checkHexWin(board, "white")).toBe(true);
     expect(checkHexWin(board, "black")).toBe(false);
+  });
+
+  it("does not call a four-stone chain that stops at row 3 a win", () => {
+    // The bug the goal-edge predicate exists to prevent. These four stones are
+    // an unbroken chain — each one touches the next along a legal direction —
+    // but the chain stops three rows short of the far edge, so Black has not
+    // won and the game is still live.
+    const board = hexPosition([
+      [3, 0, "black"],
+      [3, 1, "black"],
+      [3, 2, "black"],
+      [3, 3, "black"],
+    ]);
+    expect(checkHexWin(board, "black")).toBe(false);
+    expect(findHexWinningPath(board, "black")).toBeNull();
+  });
+
+  it("does not call a single stone on a start edge a win", () => {
+    // The degenerate case of the same bug. A flood fill seeded from the start
+    // edge immediately re-encounters that edge, so a predicate answering "is
+    // this cell on one of MY edges" reports a win for the very first stone
+    // anyone plays — and for every position thereafter.
+    const board = hexPosition([[0, 0, "black"]]);
+    expect(checkHexWin(board, "black")).toBe(false);
+    expect(findHexWinningPath(board, "black")).toBeNull();
+  });
+
+  it("calls a chain from the top edge to the bottom edge a win, and returns it whole", () => {
+    const chain: [number, number, "black" | "white"][] = [];
+    for (let y = 0; y < HEX_SIZE; y += 1) chain.push([3, y, "black"]);
+    const board = hexPosition(chain);
+
+    expect(checkHexWin(board, "black")).toBe(true);
+
+    const path = findHexWinningPath(board, "black");
+    expect(path).not.toBeNull();
+    // The path is reported, not just a boolean, so a view can highlight the
+    // stones that decided the game without running a second flood fill over the
+    // same geometry.
+    expect(path).toHaveLength(HEX_SIZE);
+    // Start edge to goal edge, in that order — the direction a player reads a
+    // chain in.
+    expect(path?.[0]).toEqual({ x: 3, y: 0 });
+    expect(path?.[path.length - 1]).toEqual({ x: 3, y: HEX_SIZE - 1 });
+    for (const cell of path ?? []) {
+      expect(board[cell.y][cell.x]).toBe("black");
+    }
+  });
+
+  it("wins on a rhombus diagonal, not only a straight one", () => {
+    // The rhombus is the whole reason Hex is not Gomoku. Row `y` is shifted half
+    // a cell right of row `y-1`, so the diagonals run (dx=+1, dy=-1) and
+    // (dx=-1, dy=+1) — NOT the (1,1) that looks like a diagonal on a square
+    // grid. This chain steps along the first of those, and a search written over
+    // only the four straight directions would break it here and lose the game.
+    const board = hexPosition([
+      [0, 6, "black"],
+      [1, 5, "black"],
+      [2, 4, "black"],
+      [3, 3, "black"],
+      [4, 2, "black"],
+      [5, 1, "black"],
+      [6, 0, "black"],
+    ]);
+    expect(checkHexWin(board, "black")).toBe(true);
+
+    const path = findHexWinningPath(board, "black");
+    expect(path).toHaveLength(HEX_SIZE);
+    // Every step really is one of the six declared directions — asserted rather
+    // than assumed, so a redefinition of HEX_DIRECTIONS cannot quietly make this
+    // test pass for the wrong reason.
+    for (let i = 1; i < (path?.length ?? 0); i += 1) {
+      const previous = path?.[i - 1] as Coordinates;
+      const current = path?.[i] as Coordinates;
+      const step: [number, number] = [current.y - previous.y, current.x - previous.x];
+      expect(HEX_DIRECTIONS).toContainEqual(step);
+    }
+  });
+
+  it("does not join two chains across a gap or an opponent's stone", () => {
+    // A white stone at (3, 3) splits Black's column into two real chains, and
+    // neither reaches the far edge. A search that walked through an occupied
+    // cell, or that treated rows as independent, would report a win.
+    const board = hexPosition([
+      [3, 0, "black"],
+      [3, 1, "black"],
+      [3, 2, "black"],
+      [3, 3, "white"],
+      [3, 4, "black"],
+      [3, 5, "black"],
+      [3, 6, "black"],
+    ]);
+    expect(checkHexWin(board, "black")).toBe(false);
+    expect(findHexWinningPath(board, "black")).toBeNull();
   });
 
   it("does not award a win to a lone stone on a goal edge", () => {

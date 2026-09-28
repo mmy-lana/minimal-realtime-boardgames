@@ -362,18 +362,38 @@ export function HexBoardView({
                     onClick={() => onSquareActivate(coord)}
                     className={cn(
                       // `group` so the ghost stone can key off the tile's own
-                      // hover rather than a second listener. The tile's shape,
-                      // hover wash and disabled treatment are left to
-                      // `BoardTile`: re-stating any of them here would put two
-                      // conflicting utilities on one element and hand the
-                      // winner to stylesheet order.
+                      // hover rather than a second listener.
                       "group",
                       // Padding, not gap: a grid gap would shrink the cells
                       // and the row would no longer be 10 cells wide across the
                       // board, which is the one number the rhombus rests on.
                       "p-[4%]",
+                      // EVERY cell carries a visible boundary, filled or empty.
+                      // This board is 49 near-white discs on a white canvas, and
+                      // a disc with a transparent background and no border is not
+                      // a subtle cell — it is not there. All 40-odd empty cells
+                      // disappeared at once, which hid the entire legal move set
+                      // behind what looked like a blank rhombus.
+                      //
+                      // A hairline border rather than a heavier one: at 49 cells
+                      // the boundaries have to read as a grid without the grid
+                      // competing with the stones sitting on it.
+                      "rounded-full border border-neutral-300 bg-neutral-100/80 shadow-sm",
+                      // A filled cell paints its own stone, so the cell's own fill
+                      // and shadow would only show as a ring around it.
+                      cell !== null && "border-transparent bg-transparent shadow-none",
+                      // A cursor is the only affordance an empty Hex cell needs;
+                      // the fill wash itself goes through `hoverWashClass` below,
+                      // because a second `hover:bg-*` here would leave two on one
+                      // element and hand the winner to stylesheet order.
+                      !disabled && cell === null && "cursor-pointer",
                       lastMoveWash(role)
                     )}
+                    hoverWashClass={
+                      !disabled && cell === null
+                        ? "hover:border-neutral-400 hover:bg-neutral-200/90"
+                        : "hover:bg-transparent"
+                    }
                   >
                     {cell !== null ? (
                       <Stone color={cell} />
