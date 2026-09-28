@@ -857,11 +857,76 @@ describe("board sizing", () => {
     unmount();
   });
 
-  it("marks Hex's two goal edges with rails rather than with a colour swap", async () => {
-    // Black's goal is the top and the bottom; White's is the left and the
-    // right. A player cannot infer that from the stones, so the rule is drawn
-    // on the board — and the rails are placed in the board's own grid, so a
-    // rail is always exactly as long as the edge it names.
+  it("stacks no two Hex rows on top of one another", async () => {
+    // The bug this exists for: every row was absolutely positioned with no
+    // `top` of its own, so all seven sat at `top: 0` and 49 stones were drawn
+    // in one overlapping line along the top edge. The geometry was correct and
+    // the rows were still stacked, which is why only `top` — not the width or
+    // the half-cell offset — is asserted here.
+    const { HexBoardView } = await import("@/components/boards/HexBoardView");
+    const engine = getSessionEngine("hex");
+    // A played position, so the assertion is about stones and not about gaps.
+    let board = engine.createInitialBoard();
+    for (const coord of [
+      { x: 0, y: 0 },
+      { x: 6, y: 6 },
+      { x: 3, y: 3 },
+    ] as const) {
+      board = engine.applyMove(board, { to: coord }, "black").board;
+    }
+
+    const { container, unmount } = render(
+      <HexBoardView
+        board={board}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Hex board"
+        size="sm"
+      />
+    );
+
+    const rows = [...container.querySelectorAll('[style*="repeat(7, minmax(0, 1fr))"]')] as HTMLElement[];
+    expect(rows).toHaveLength(7);
+
+    // Row `y` starts one seventh of the board lower than row `y - 1`, and each
+    // is exactly one seventh tall, so they tile the board with no overlap and no
+    // gap. Every `top` is distinct — that is the whole regression.
+    const tops = rows.map((row) => row.style.top);
+    expect(new Set(tops).size).toBe(7);
+    expect(tops[0]).toBe("0%");
+    expect(tops[6]).toBe(`${(6 / 7) * 100}%`);
+
+    const toPercent = (value: string): number => Number.parseFloat(value);
+    for (let y = 0; y < rows.length; y += 1) {
+      const row = rows[y]!;
+      expect(toPercent(row.style.top)).toBeCloseTo((y / 7) * 100, 6);
+      expect(toPercent(row.style.height)).toBeCloseTo((1 / 7) * 100, 6);
+      // The bottom of this row is the top of the next one: touching, not
+      // overlapping, and never running off the board.
+      expect(toPercent(row.style.top) + toPercent(row.style.height)).toBeCloseTo(((y + 1) / 7) * 100, 6);
+      expect(toPercent(row.style.left) + toPercent(row.style.width)).toBeLessThanOrEqual(100.000001);
+    }
+
+    // And the consequence a player would actually see: three stones in three
+    // different rows are three different vertical positions, not one line.
+    const stones = [...container.querySelectorAll("span[class*='size-[74%]']")].filter(
+      (stone) => (stone.getAttribute("class") ?? "").includes("bg-neutral-900")
+    );
+    expect(stones.length).toBe(3);
+    const stoneTops = new Set(stones.map((stone) => (stone.parentElement as HTMLElement).parentElement!.style.top));
+    expect(stoneTops.size).toBe(3);
+    unmount();
+  });
+
+  it("names both goal edges in words, not only in a bar of colour", async () => {
+    // A rail on its own says which edges; it does not say whose. A player who
+    // cannot tell Black's goal from White's cannot play the game, so each rail is
+    // captioned, and the caption points at the rail it belongs to.
     const { HexBoardView } = await import("@/components/boards/HexBoardView");
     const { container, unmount } = render(
       <HexBoardView
@@ -878,16 +943,59 @@ describe("board sizing", () => {
       />
     );
 
-    const rails = [...container.querySelectorAll("span[style*='grid-area']")] as HTMLElement[];
-    expect(rails).toHaveLength(4);
-    // Two horizontal (Black, above and below) and two vertical (White).
-    const horizontal = rails.filter((n) => n.className.includes("bg-neutral-900"));
-    const vertical = rails.filter((n) => n.className.includes("bg-neutral-50"));
-    expect(horizontal.map((n) => n.style.gridArea)).toEqual(["1 / 2", "3 / 2"]);
-    expect(vertical.map((n) => n.style.gridArea)).toEqual(["2 / 1", "2 / 3"]);
-    // The white rails are a light fill, so they need the dark rim the black
-    // rails — which are dark themselves — do not.
-    for (const rail of vertical) expect(rail.className).toContain("border-neutral-300");
+    const edges = ["black-top", "black-bottom", "white-left", "white-right"];
+    // Each caption is placed in the board's own grid: the two Black ones above
+    // and below the playfield, the two White ones either side of it. A caption
+    // that drifted into a corner would still read correctly and still point at
+    // the wrong edge, so the placement is asserted rather than the words alone.
+    const gridArea = {
+      "black-top": "1 / 2",
+      "black-bottom": "3 / 2",
+      "white-left": "2 / 1",
+      "white-right": "2 / 3",
+    } as const;
+    for (const edge of edges) {
+      const node = container.querySelector(`[data-goal-edge='${edge}']`) as HTMLElement;
+      expect(node, `${edge} is not captioned`).not.toBeNull();
+      expect(node.style.gridArea, `${edge} is beside the wrong edge`).toBe(gridArea[edge]);
+      const caption = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+      expect(caption, `${edge} names the wrong goal`).toBe(
+        edge.startsWith("black") ? "Black Goal Edge" : "White Goal Edge"
+      );
+      // The rail itself is still there, and still the same colour it always was.
+      const rail = node.querySelector("[data-edge-rail]") as HTMLElement;
+      expect(rail, `${edge} lost its rail`).not.toBeNull();
+      expect(rail.getAttribute("aria-hidden")).toBe("true");
+      expect(rail.className).toContain(edge.startsWith("black") ? "bg-neutral-900" : "bg-neutral-50");
+      // The rail spans the edge it labels: the full width of the board above and
+      // below, the full height of it at either side.
+      if (edge.endsWith("top") || edge.endsWith("bottom")) {
+        expect(rail.style.height).toBe("9px");
+      } else {
+        expect(rail.style.width).toBe("9px");
+        expect(rail.className).toContain("self-stretch");
+      }
+      // Two arrows, pointing at this edge rather than at its neighbour.
+      const arrows = node.querySelectorAll("svg");
+      expect(arrows).toHaveLength(2);
+      const pointing = {
+        "black-top": "rotate(180deg)",
+        "black-bottom": "rotate(0deg)",
+        "white-left": "rotate(90deg)",
+        "white-right": "rotate(270deg)",
+      }[edge]!;
+      for (const arrow of arrows) {
+        expect((arrow as SVGElement).style.transform, `${edge} points the wrong way`).toBe(pointing);
+        expect(arrow.getAttribute("aria-hidden")).toBe("true");
+      }
+    }
+
+    // The side captions run down their strip rather than across it, so the strip
+    // stays narrow enough to leave the board its width.
+    const side = container.querySelector("[data-goal-edge='white-left'] [data-edge-words]") as HTMLElement;
+    expect(side).not.toBeNull();
+    expect(side.textContent).toBe("White Goal Edge");
+    expect(side.className).toContain("[writing-mode:vertical-rl]");
     unmount();
   });
 

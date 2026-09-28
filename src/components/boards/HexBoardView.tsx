@@ -27,6 +27,12 @@
  * the edge it labels, at any viewport, with no measurement of the board
  * itself.
  *
+ * Each rail is captioned, because a rail on its own says *which* edges and not
+ * *whose*: a player who cannot tell Black's goal from White's cannot play the
+ * game, however obvious the difference looks from inside one. A caption names
+ * the edge in words and points an arrow at it, and the arrows are drawn rather
+ * than typed so they are the same shape on every device.
+ *
  * **No cell is marked as a destination in advance.** In Hex every empty cell
  * is legal on every turn, so a marker per destination would be 49 dots saying
  * what the board already shows — this cell is empty. The only moment a player
@@ -47,9 +53,137 @@ import { coordKey, isLastMove, lastMoveWash, type SquareRole, squareRole } from 
 /** Width of one of the four goal rails. Fixed: they label an edge, not a cell. */
 const RAIL_CLASS = "rounded-sm";
 
+/** Thickness of a rail, in pixels. Fixed for the same reason. */
+const RAIL_THICKNESS = 9;
+
 /** The rails, as (colour, which edges) — see the module note. */
 const BLACK_RAIL = "bg-neutral-900";
 const WHITE_RAIL = "border border-neutral-300 bg-neutral-50";
+
+/** Shared caption styling. Ten-point, tracked out, and never below 4.5:1. */
+const CAPTION_CLASS = "text-[9px] font-semibold uppercase leading-none tracking-[0.12em] text-neutral-700";
+
+type ArrowDirection = "up" | "down" | "left" | "right";
+
+const ARROW_ROTATION: Readonly<Record<ArrowDirection, number>> = {
+  up: 0,
+  right: 90,
+  down: 180,
+  left: 270,
+};
+
+/**
+ * The arrow that points at the edge its caption names.
+ *
+ * Drawn rather than typed. A glyph is whatever font the device happens to
+ * resolve, and these arrows are load-bearing: they are how a caption says which
+ * way its rail lies. One path rotated about its own centre is the same shape
+ * everywhere and costs one node instead of a webfont's worth of coverage.
+ */
+function EdgeArrow({ direction, className }: { readonly direction: ArrowDirection; readonly className?: string }): React.ReactElement {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      className={cn("size-2.5 shrink-0", className)}
+      style={{ transform: `rotate(${ARROW_ROTATION[direction]}deg)` }}
+    >
+      <path
+        d="M12 20V5M12 5L5.5 11.5M12 5l6.5 6.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** The bar along one edge. Decorative: the caption beside it carries the meaning. */
+function EdgeRail({ edge, side }: { readonly edge: "black" | "white"; readonly side: EdgeSide }): React.ReactElement {
+  const isHorizontal = side === "top" || side === "bottom";
+  return (
+    <span
+      aria-hidden="true"
+      data-edge-rail={`${edge}-${side}`}
+      className={cn(
+        RAIL_CLASS,
+        edge === "black" ? BLACK_RAIL : WHITE_RAIL,
+        // A side rail runs the full height of the board and a top or bottom rail
+        // the full width of it. `self-stretch` rather than a percentage height:
+        // it is the cross-axis size, so it fills the strip whatever the caption
+        // beside it measures.
+        isHorizontal ? "w-full shrink-0" : "self-stretch shrink-0"
+      )}
+      style={isHorizontal ? { height: RAIL_THICKNESS } : { width: RAIL_THICKNESS }}
+    />
+  );
+}
+
+/** Which of the four edges a caption belongs to. */
+type EdgeSide = "top" | "bottom" | "left" | "right";
+
+/** The word each caption spells out. Kept next to the arrows it shares a row with. */
+const EDGE_LABEL = "Black Goal Edge";
+const OPPONENT_EDGE_LABEL = "White Goal Edge";
+
+/**
+ * A goal edge, drawn as caption + arrow + rail.
+ *
+ * The arrow always points *inwards*, at the rail its own caption sits beside,
+ * so the pairing is read off the layout instead of guessed at: the caption
+ * above the top rail points down, the one below the bottom rail points up, and
+ * the two side captions point at the board from either side. An arrow that
+ * pointed outwards would name the neighbouring edge, which is the one thing
+ * this caption must never do.
+ *
+ * The two orientations are separate components rather than one with a branch:
+ * a side caption runs *down* its strip, so its words are set vertically while
+ * the arrows stay upright around them. Rotating one horizontal caption instead
+ * would rotate its arrows with it and turn them into a caption for the
+ * opposite edge.
+ */
+function HorizontalGoalEdge({ side, edge }: { readonly side: "top" | "bottom"; readonly edge: "black" | "white" }): React.ReactElement {
+  const arrow: ArrowDirection = side === "top" ? "down" : "up";
+  return (
+    <div
+      data-goal-edge={`${edge}-${side}`}
+      className="flex flex-col items-center gap-1"
+      style={{ gridArea: side === "top" ? "1 / 2" : "3 / 2" }}
+    >
+      <span className={cn("flex items-center gap-1", CAPTION_CLASS)}>
+        <EdgeArrow direction={arrow} />
+        {edge === "black" ? EDGE_LABEL : OPPONENT_EDGE_LABEL}
+        <EdgeArrow direction={arrow} />
+      </span>
+      <EdgeRail edge={edge} side={side} />
+    </div>
+  );
+}
+
+/** A side caption, set vertically down the rail it labels. */
+function VerticalGoalEdge({ side, edge }: { readonly side: "left" | "right"; readonly edge: "black" | "white" }): React.ReactElement {
+  const arrow: ArrowDirection = side === "left" ? "right" : "left";
+  return (
+    <div
+      data-goal-edge={`${edge}-${side}`}
+      className="flex items-center gap-1"
+      style={{ gridArea: `2 / ${side === "left" ? 1 : 3}` }}
+    >
+      {side === "left" ? <EdgeRail edge={edge} side={side} /> : null}
+      <span className={cn("flex flex-col items-center gap-1", CAPTION_CLASS)}>
+        <EdgeArrow direction={arrow} />
+        <span data-edge-words="" className="whitespace-nowrap [writing-mode:vertical-rl]">
+          {edge === "black" ? EDGE_LABEL : OPPONENT_EDGE_LABEL}
+        </span>
+        <EdgeArrow direction={arrow} />
+      </span>
+      {side === "right" ? <EdgeRail edge={edge} side={side} /> : null}
+    </div>
+  );
+}
 
 /**
  * Black: jet. A near-black disc with the highlight on the upper left and the
@@ -125,19 +259,22 @@ export function HexBoardView({
       <div
         className="grid"
         style={{
-          // A rail track either side of the board and a rail track above and
-          // below it. The middle row is `auto`, so the rails take the board's
-          // own measured height instead of guessing it.
-          gridTemplateColumns: "9px minmax(0, 1fr) 9px",
-          gridTemplateRows: "9px auto 9px",
+          // A captioned rail track on every side of the board. The tracks are
+          // `auto` rather than a fixed number of pixels because each one now
+          // holds a caption as well as a bar, and the caption is the part that
+          // has to stay legible. The middle row is `auto` too, so the board
+          // takes its own measured height from its 10:7 ratio instead of the
+          // rails having to guess it.
+          gridTemplateColumns: "auto minmax(0, 1fr) auto",
+          gridTemplateRows: "auto minmax(0, 1fr) auto",
           columnGap: "3px",
           rowGap: "3px",
         }}
       >
-        <span aria-hidden="true" className={cn(RAIL_CLASS, BLACK_RAIL)} style={{ gridArea: "1 / 2" }} />
-        <span aria-hidden="true" className={cn(RAIL_CLASS, BLACK_RAIL)} style={{ gridArea: "3 / 2" }} />
-        <span aria-hidden="true" className={cn(RAIL_CLASS, WHITE_RAIL)} style={{ gridArea: "2 / 1" }} />
-        <span aria-hidden="true" className={cn(RAIL_CLASS, WHITE_RAIL)} style={{ gridArea: "2 / 3" }} />
+        <HorizontalGoalEdge side="top" edge="black" />
+        <HorizontalGoalEdge side="bottom" edge="black" />
+        <VerticalGoalEdge side="left" edge="white" />
+        <VerticalGoalEdge side="right" edge="white" />
 
         <div
           role="grid"
@@ -151,13 +288,20 @@ export function HexBoardView({
           {rows.map((y) => (
             <div
               key={`row-${y}`}
-              className="absolute top-0 grid"
+              className="absolute grid"
               style={{
                 // 7 cells of the 10-cell board width, shifted by half a cell per
-                // row. Both are exact fractions of the board, so the offset
+                // row, and each row exactly one seventh of the board's height.
+                // All three are exact fractions of the board, so the rhombus
                 // survives any resize without a single hard-coded pixel.
+                //
+                // `top` is what makes the rhombus a rhombus. Without it every row
+                // is absolutely positioned at `top: 0` and all 49 stones pile
+                // into one overlapping line across the top edge — the rows were
+                // measured correctly and then all drawn on top of each other.
                 width: `${(7 / 10) * 100}%`,
                 height: `${(1 / HEX_SIZE) * 100}%`,
+                top: `${(y / HEX_SIZE) * 100}%`,
                 left: `${(y / 2 / 10) * 100}%`,
                 gridTemplateColumns: `repeat(${HEX_SIZE}, minmax(0, 1fr))`,
               }}
