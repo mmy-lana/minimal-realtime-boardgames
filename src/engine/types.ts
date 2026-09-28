@@ -592,6 +592,66 @@ export const GAME_METADATA: Readonly<Record<GameKind, GameMetadata>> = {
   },
 };
 
-export function getGameMetadata(kind: GameKind): GameMetadata {
-  return GAME_METADATA[kind];
+/**
+ * Metadata for a kind this build does not have.
+ *
+ * The `null` kind is load-bearing rather than a placeholder. Reporting
+ * `kind: "hex"` for a row whose `gameKind` is `"chess"` would let any caller
+ * that routes on `metadata.kind` quietly hand a legacy session to the Hex
+ * engine — a wrong game that loads cleanly, which is far harder to notice than
+ * the crash this shape replaces. `null` instead forces the caller to decide
+ * what an unknown kind means.
+ */
+export interface UnknownGameMetadata {
+  readonly kind: null;
+  readonly name: string;
+  readonly shortName: string;
+  readonly gridLabel: string;
+  readonly players: 2;
+  readonly description: string;
+  /** Always `null`: an unknown kind has no board geometry to report. */
+  readonly dimensions: null;
+}
+
+/** Shown when a stored `gameKind` is not merely unknown but unusable as a label. */
+const UNKNOWN_KIND_NAME = "Unknown game";
+
+/**
+ * Renders a stored kind for display when it is no longer in the catalog.
+ *
+ * The stored value is echoed back verbatim, truncated, because the most useful
+ * thing this can say is *which* retired kind the row still thinks it is — that
+ * is the whole diagnostic. The cap is a rendering guard: this string comes from
+ * persisted data, and a corrupt row can hold anything, so it must not be able
+ * to stretch a header across a phone screen.
+ */
+function unknownKindName(kind: unknown): string {
+  if (typeof kind !== "string") return UNKNOWN_KIND_NAME;
+  const trimmed = kind.trim();
+  if (trimmed.length === 0) return UNKNOWN_KIND_NAME;
+  return trimmed.length > 32 ? `${trimmed.slice(0, 31)}…` : trimmed;
+}
+
+/**
+ * Display metadata for any kind, known or not.
+ *
+ * This is total: it accepts `unknown` because the values it is called with
+ * reach it from persisted and remote data, where a retired kind is a fact of
+ * life rather than a type error. An earlier `GAME_METADATA[kind]` returned
+ * `undefined` for such a value, and every caller then read `.name` off it —
+ * which is how one stale IndexedDB row took down the whole home page.
+ */
+export function getGameMetadata(kind: unknown): GameMetadata | UnknownGameMetadata {
+  if (isGameKind(kind)) return GAME_METADATA[kind];
+  const name = unknownKindName(kind);
+  const shortName = name.replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "??";
+  return {
+    kind: null,
+    name,
+    shortName,
+    gridLabel: "n/a",
+    players: 2,
+    description: "This session was saved by a different version of the app and cannot be resumed.",
+    dimensions: null,
+  };
 }

@@ -20,9 +20,10 @@ import { useRouter } from "next/navigation";
 import { useLiveQuery } from "dexie-react-hooks";
 
 import {
-  GAME_METADATA,
   GameKind,
   SessionMode,
+  getGameMetadata,
+  isGameKind,
   type GameMetadata,
 } from "@/engine/types";
 import { listSessionsByRecentActivity } from "@/lib/db";
@@ -202,7 +203,15 @@ function RecentSessions(): React.ReactElement | null {
     undefined
   );
 
-  if (!sessions || sessions.length === 0) {
+  // Rows whose `gameKind` is not in the catalog are dropped here rather than
+  // rendered. A recent-sessions entry is a *link into a game*, and a session
+  // for a kind this build no longer has is not reachable — linking to it
+  // produces a dead route, and rendering it is exactly what crashed this page
+  // before. The database migration in `lib/db.ts` removes the cause; this is
+  // the same rule applied to whatever the live query hands back.
+  const validSessions = (sessions ?? []).filter((session) => isGameKind(session.gameKind));
+
+  if (validSessions.length === 0) {
     return (
       <section aria-label="Recent sessions" className="mt-8">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-board-muted">Recent</h2>
@@ -217,7 +226,11 @@ function RecentSessions(): React.ReactElement | null {
     <section aria-label="Recent sessions" className="mt-8">
       <h2 className="text-xs font-semibold uppercase tracking-wider text-board-muted">Recent</h2>
       <ul className="mt-2 divide-y divide-hairline border-y border-hairline">
-        {sessions.map((session) => {
+        {validSessions.map((session) => {
+          // Narrowed by the filter above, so this is a catalog lookup, not a
+          // speculative one. `getGameMetadata` is total, which is what keeps a
+          // future retired kind from turning this line back into a crash.
+          const meta = getGameMetadata(session.gameKind);
           const href =
             session.mode === "online_realtime"
               ? `/${session.gameKind}/${session.id}`
@@ -229,7 +242,7 @@ function RecentSessions(): React.ReactElement | null {
                 className="flex items-center gap-3 py-2.5 text-sm transition-colors hover:bg-board-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-board-dark"
               >
                 <span className="min-w-0 flex-1 truncate">
-                  {GAME_METADATA[session.gameKind].name}
+                  {meta.name}
                 </span>
                 <span className="shrink-0 text-xs text-board-muted">
                   {formatRelativeTime(session.updatedAt)}
