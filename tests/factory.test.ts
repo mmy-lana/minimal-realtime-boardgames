@@ -12,6 +12,7 @@ import {
   matchStatusFromResult,
   opponentOf,
   winnerFromStatus,
+  type CheckersBoard,
   type Connect4Board,
   type Coordinates,
   type GameSession,
@@ -524,5 +525,87 @@ describe("engine registry", () => {
 
   it("rejects an unknown kind", () => {
     expect(() => getSessionEngine("nope" as never)).toThrow();
+  });
+});
+
+describe("checkers capture chains at the session boundary", () => {
+  /**
+   * Two positions differing in exactly one way: whether the piece making the
+   * capture was a man arriving on the king row, or a king that was always one.
+   * The engine decides the turn; the factory is what tells the session layer.
+   * Without these, the crowning rule could pass every engine test and still
+   * hand the player a second capture the rules never allowed.
+   */
+  function crownPosition(pieceType: "pawn" | "king"): CheckersBoard {
+    const board: CheckersBoard = Array.from({ length: 8 }, () => Array(8).fill(null));
+    board[5]![0] = { color: "black", type: pieceType };
+    board[6]![1] = { color: "white", type: "pawn" };
+    board[6]![3] = { color: "white", type: "pawn" };
+    return board;
+  }
+
+  // `jumpedCoord` is deliberately absent: the factory re-derives it from
+  // `from`/`to` so a replayed move is identical to a locally dispatched one, and
+  // a test that passed it in would be testing a field the wire never carries.
+  const CROWNING_JUMP = {
+    from: { x: 0, y: 5 },
+    to: { x: 2, y: 7 },
+  };
+
+  const engine = getSessionEngine("checkers");
+
+  it("keeps a crowned piece out of hand and hands the turn over", () => {
+    // A man at b5 jumps onto the king row at c7. The engine reports the turn is
+    // over, and the factory must act on it twice: the turn passes, and the piece
+    // is NOT retained. Retaining it would leave a selected piece on a board that
+    // is no longer Black's to move.
+    //
+    // `passesTurn` is the "mover keeps the turn" flag, so a finished chain is
+    // `false` here. The name reads backwards against the value, which is why
+    // this test states both halves rather than trusting either one alone.
+    const result = engine.applyMove(
+      { kind: "checkers", state: crownPosition("pawn") },
+      { from: CROWNING_JUMP.from, to: CROWNING_JUMP.to },
+      "black"
+    );
+
+    expect(result.passesTurn).toBe(false);
+    expect(result.retainedSelection).toBeUndefined();
+    expect(result.winner).toBeNull();
+  });
+
+  it("keeps a chain alive when the piece was already a king", () => {
+    // The same geometry with a king rather than a man. Nothing about being a man
+    // was what stopped the chain — nothing changed for this piece, so the chain
+    // continues and the piece stays in hand.
+    const result = engine.applyMove(
+      { kind: "checkers", state: crownPosition("king") },
+      { from: CROWNING_JUMP.from, to: CROWNING_JUMP.to },
+      "black"
+    );
+
+    expect(result.passesTurn).toBe(true);
+    expect(result.retainedSelection).toEqual(CROWNING_JUMP.to);
+  });
+
+  it("never retains a selection on a game that is already won", () => {
+    // The guard the crown rule does not cover: a capture that ends the match has
+    // nothing left to continue, and a live highlight under a game-over dialog is
+    // a lie about whose turn it is.
+    // Black's man at b2 jumps to d4 over the white piece on c3, and that is the
+    // last white piece on the board.
+    const board: CheckersBoard = Array.from({ length: 8 }, () => Array(8).fill(null));
+    board[2]![1] = { color: "black", type: "pawn" };
+    board[3]![2] = { color: "white", type: "pawn" };
+
+    const result = engine.applyMove(
+      { kind: "checkers", state: board },
+      { from: { x: 1, y: 2 }, to: { x: 3, y: 4 } },
+      "black"
+    );
+
+    // White has nothing left to move with, so the game is over.
+    expect(result.winner).toBe("black");
+    expect(result.retainedSelection).toBeUndefined();
   });
 });
