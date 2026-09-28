@@ -53,10 +53,20 @@ const SIZE_CLASSES: Record<BoardTileSize, string> = {
   lg: "min-h-11",
 };
 
+/**
+ * Emphasis is a ring, not a border.
+ *
+ * A border is part of the element's box model: a 1px border and a 2px border
+ * are two different sizes, and toggling between them at click time is exactly
+ * the pixel of jitter this component exists to prevent. A ring is a
+ * `box-shadow` painted outside — or, with `ring-inset`, inside — the border
+ * box, so it changes what a tile *looks* like without changing what it
+ * *measures*. No state below may set `border-width`.
+ */
 const EMPHASIS_CLASSES: Record<BoardTileEmphasis, string> = {
-  none: "border-transparent",
-  subtle: "border-board-border",
-  strong: "border-board-dark",
+  none: "",
+  subtle: "ring-1 ring-inset ring-board-border",
+  strong: "ring-1 ring-inset ring-board-dark",
 };
 
 /**
@@ -84,6 +94,19 @@ export function BoardTile({
   type,
   ...rest
 }: BoardTileProps) {
+  // Exactly one ring, chosen in one place.
+  //
+  // Two `ring-*` utilities on the same element are a CSS conflict whose winner
+  // is decided by stylesheet order, not by the order the classes appear in the
+  // attribute — so a selection ring could be silently overridden by an
+  // emphasis ring and the tile would look different at different viewport
+  // widths. Picking one here makes the result deterministic by construction.
+  const ringClass = selected
+    ? "ring-2 ring-inset ring-board-dark"
+    : isLastMove
+      ? "ring-2 ring-inset ring-amber-400/80"
+      : EMPHASIS_CLASSES[emphasis];
+
   return (
     <button
       {...rest}
@@ -111,18 +134,21 @@ export function BoardTile({
         ...rest.style,
       }}
       className={cn(
-        "relative inline-flex shrink-0 items-center justify-center",
-        "w-full aspect-square",
-        "select-none border",
+        "relative inline-flex w-full aspect-square shrink-0 items-center justify-center",
+        "select-none overflow-hidden",
         "transition-colors duration-75",
         shape === "circle" ? "rounded-full" : "rounded-none",
         SIZE_CLASSES[size],
-        EMPHASIS_CLASSES[emphasis],
+        ringClass,
         "hover:bg-board-subtle/60",
         "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-board-dark",
         "disabled:cursor-not-allowed disabled:hover:bg-transparent",
         selected && "bg-board-subtle",
-        isLastMove && "after:pointer-events-none after:absolute after:inset-0 after:border after:border-board-muted",
+        // A legal destination is a dot painted on top of the tile, drawn with
+        // an absolutely positioned pseudo-element. It never consumes layout
+        // space, so revealing it cannot reflow the board.
+        isLegalTarget &&
+          "after:pointer-events-none after:absolute after:inset-[30%] after:rounded-full after:border-2 after:border-board-dark/70",
         className,
       )}
     >

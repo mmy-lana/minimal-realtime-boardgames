@@ -22,6 +22,7 @@ import type { GameKind, PlayerColor } from "@/engine/types";
 const { GameShell } = await import("@/components/compound/GameShell");
 const { PlayerScoreCard } = await import("@/components/compound/PlayerScoreCard");
 const { BoardStage } = await import("@/components/compound/BoardStage");
+const { BoardTile } = await import("@/components/primitives/BoardTile");
 const { getSessionEngine } = await import("@/engine/factory");
 
 const BOARD_VIEWS: ReadonlyArray<readonly [GameKind, () => Promise<unknown>]> = [
@@ -224,19 +225,124 @@ describe("GameShell rules dialog", () => {
 });
 
 describe("board sizing", () => {
-  it("caps the board width and lets it fill whatever it is given", () => {
-    // The stage owns the cap. Board height follows from the column count, so
-    // forcing a square here would distort every non-square board — Connect
-    // Four is 7x6 and would have been stretched.
+  it("locks the frame so nothing a player does can resize it", () => {
+    // The stage is two boxes: a rigid frame whose geometry comes from the
+    // viewport alone, and a centring canvas inside it. The frame is what makes
+    // "selection never changes the board's size" a structural fact rather than
+    // a promise each board view has to keep.
     render(
       <BoardStage gameKind="tictactoe" size="md" isDesktop={false}>
         <div />
       </BoardStage>
     );
-    const stage = document.querySelector("[data-board-stage]");
-    expect(stage?.className).toContain("w-full");
-    expect(stage?.className).toMatch(/max-w-\[min\(92vw,34rem\)\]/);
-    expect(stage?.className).not.toContain("aspect-square");
+    const stage = document.querySelector("[data-board-stage]") as HTMLElement;
+    expect(stage.className).toContain("w-full");
+    // A generous desktop cap: 620px, not the 34rem (544px) it used to be.
+    expect(stage.className).toMatch(/max-w-\[min\(92vw,620px\)\]/);
+    expect(stage.className).toContain("overflow-hidden");
+    expect(stage.className).toContain("shrink-0");
+    // The ratio is set inline so it sits next to the `overflow-hidden` that
+    // depends on it.
+    expect(stage.style.aspectRatio).toBe("1 / 1");
+  });
+
+  it("keeps a non-square board centred inside the square frame", () => {
+    // Connect Four is 7x6. Forcing a square on the *board* would stretch it;
+    // forcing a square on the *frame* is fine and is what the board centres
+    // itself inside.
+    const { container } = render(
+      <BoardStage gameKind="connect4" size="md" isDesktop>
+        <div data-testid="inner" />
+      </BoardStage>
+    );
+    const canvas = container.querySelector("[data-board-stage] > div") as HTMLElement;
+    expect(canvas.className).toContain("items-center");
+    expect(canvas.className).toContain("justify-center");
+    expect(canvas.className).toContain("h-full");
+  });
+
+  it("never resizes a tile when a board state changes", async () => {
+    // The jitter bug, stated as a test. A tile's *state* classes may change
+    // freely between renders — selecting, targeting, last-move — but the set
+    // of classes that decide its box model may not.
+    const empty = () => new Set<string>();
+    for (const [kind, load] of BOARD_VIEWS) {
+      const View = (await load()) as React.ComponentType<Record<string, unknown>>;
+      const board = getSessionEngine(kind).createInitialBoard();
+      const base = {
+        board,
+        selected: empty(),
+        legalSquares: empty(),
+        selectableSquares: empty(),
+        destinations: empty(),
+        lastMove: null,
+        disabled: false,
+        onSquareActivate: () => {},
+        label: `${kind} board`,
+        size: "sm",
+      };
+      const { container, rerender, unmount } = render(<View {...base} />);
+
+      // Snapshot the box-model classes of every tile, then turn every state
+      // flag on at once and compare.
+      const boxModelOf = () =>
+        [...container.querySelectorAll("[data-board-surface]")].map((tile) =>
+          tile.className
+            .split(/\s+/)
+            .filter((token) => /^(border|w-|h-|size-|min-w-|min-h-|max-w-|max-h-|p|px|py|m|gap)-?/.test(token))
+            .sort()
+            .join(" ")
+        );
+
+      const before = boxModelOf();
+      expect(before.length, `${kind} should render tiles`).toBeGreaterThan(0);
+
+      rerender(
+        <View
+          {...base}
+          selected={new Set(["0,0"])}
+          legalSquares={new Set(["1,1"])}
+          destinations={new Set(["1,1"])}
+          lastMove={{ from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }}
+        />
+      );
+
+      expect(boxModelOf(), `${kind} tile box model must not depend on state`).toEqual(before);
+      unmount();
+    }
+  });
+
+  it("gives a tile no border at all, in any state", () => {
+    // A border is the one thing a tile must never carry: 0px and 2px are
+    // different box models, and the difference is exactly the jump.
+    const states: ReadonlyArray<{ name: string; selected?: boolean; isLegalTarget?: boolean; isLastMove?: boolean }> = [
+      { name: "idle" },
+      { name: "selected", selected: true },
+      { name: "target", isLegalTarget: true },
+      { name: "last move", isLastMove: true },
+      { name: "everything at once", selected: true, isLegalTarget: true, isLastMove: true },
+    ];
+    for (const state of states) {
+      const { unmount } = render(
+        <BoardTile
+          label="A1"
+          onClick={() => {}}
+          selected={state.selected}
+          isLegalTarget={state.isLegalTarget}
+          isLastMove={state.isLastMove}
+        />
+      );
+      const tile = document.querySelector("[data-board-surface]") as HTMLElement;
+      const borderUtilities = tile.className
+        .split(/\s+/)
+        .filter((token) => /^border(-\d|$)/.test(token));
+      expect(borderUtilities, `${state.name} tile must carry no border`).toEqual([]);
+      // The selection treatment is a ring instead, and an inset one so it
+      // paints inside the tile rather than stealing a pixel from its neighbour.
+      if (state.selected) expect(tile.className).toMatch(/ring-2/);
+      if (state.selected || state.isLastMove) expect(tile.className).toMatch(/ring-inset/);
+      unmount();
+    }
   });
 
   it("never pins a board cell to a fixed pixel size", async () => {

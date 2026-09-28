@@ -1,20 +1,33 @@
 "use client";
 
 /**
- * The board stage — the centred canvas every board renders inside.
+ * The board stage — the rigid canvas every board renders inside.
  *
- * Its one job is sizing, and it owns that job outright. Each board is a CSS
- * grid whose tiles are `w-full aspect-square`, so a board's height falls out of
- * its width and its column count: an 8x8 grid is square, Connect Four's 7x6 is
- * 7:6. The stage therefore only has to decide how *wide* a board may get, and
- * it decides that in one place so the six board definitions never have to carry
- * viewport logic of their own.
+ * The stage exists to make one guarantee: **nothing a player does can change how
+ * much room the board takes up.** Selecting a piece, hovering a destination and
+ * a piece landing are all ordinary play, and each was nudging the canvas by a
+ * pixel or two. That is not cosmetic — a board that resizes under the pointer
+ * moves the very cell the pointer was aiming at, so a click lands on the wrong
+ * square and the player blames themselves for it.
  *
- * The cap is `min(92vw, 34rem)`. The `92vw` keeps a board off the viewport edge
- * on a 360/390/430px phone; the `34rem` ceiling is what stops a desktop board
- * from growing without bound, which is the other half of the bug this replaces
- * — boards used to be pinned to a fixed cell size inside an unbounded column,
- * so they rendered postage-stamp sized in the middle of a large screen.
+ * Two boxes, not one, because the guarantee needs to be structural rather than
+ * a promise each of the six board views has to keep:
+ *
+ *  - the **frame** is a locked square with a fixed width and `overflow-hidden`.
+ *    Its geometry is computed from the viewport alone, so it cannot respond to
+ *    its contents at all. This is the box that stops jitter.
+ *  - the **canvas** inside it is a plain centring flex box. The board fills it
+ *    and derives its own height from its own geometry — an 8x8 grid is square,
+ *    Connect Four's 7x6 is 7:6 and sits centred with symmetric slack.
+ *
+ * The frame's padding is not decoration: it is the room the board's own drop
+ * shadow needs, because `overflow-hidden` would otherwise clip it flat.
+ *
+ * The cap is `min(92vw, 620px)`. The `92vw` keeps a board off the viewport edge
+ * on a 360/390/430px phone; the `620px` ceiling is the desktop size. Boards may
+ * still declare a smaller cap of their own (Tic-Tac-Toe is 480px by nature), but
+ * this frame is the binding constraint for the rest — a board that asked for
+ * more than 620px is asking for more than the stage will hand out.
  *
  * The old invisible tap-intercept overlay is gone. It became interactive on
  * `pointerdown` and stayed that way until `pointerup`, so the click it was
@@ -30,6 +43,10 @@ import { cn } from "@/lib/utils";
 import type { BoardCellSize } from "../boards/boardViewTypes";
 
 export type { BoardCellSize };
+
+/** The desktop ceiling, shared with the per-board caps so they can reason
+ *  about it without duplicating the number in six files. */
+export const BOARD_STAGE_MAX_WIDTH = 620;
 
 export interface BoardStageProps {
   readonly gameKind: GameKind;
@@ -48,15 +65,24 @@ export function BoardStage({
   className,
 }: BoardStageProps): React.ReactElement {
   return (
+    // The frame. `aspect-square` is set inline rather than as a utility so the
+    // ratio is visible next to the `overflow-hidden` that depends on it, and so
+    // the geometry reads as one deliberate decision rather than three.
     <div
       data-board-stage={gameKind}
       data-cell-size={size}
+      data-desktop={isDesktop ? "true" : undefined}
       className={cn(
-        "mx-auto w-full max-w-[min(92vw,34rem)]",
-        className,
+        "relative mx-auto w-full max-w-[min(92vw,620px)] shrink-0 overflow-hidden p-2",
+        className
       )}
+      style={{ aspectRatio: "1 / 1" }}
     >
-      {children}
+      {/* The canvas. Nothing here sizes anything — it only centres whatever the
+          board decides to be, and it stretches to the frame so a short board
+          (Connect Four's 7:6) is centred against a stable height rather than
+          collapsing the frame. */}
+      <div className="flex h-full w-full items-center justify-center">{children}</div>
     </div>
   );
 }
