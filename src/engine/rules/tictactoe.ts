@@ -98,13 +98,23 @@ export function getTicTacToeLegalMoves(board: TicTacToeBoard): Coordinates[] {
   return moves;
 }
 
-/** The winning line containing the last stone, or `null` when there is none. */
+/**
+ * The winning line containing the mark just played, or `null` when there is none.
+ *
+ * `index` is optional, and supplying it is a correctness requirement rather than
+ * an optimisation. Omit it and the search runs over all eight lines, which
+ * reports a line completed by some *earlier* move that merely still happens to be
+ * on the board: the game declares a winner and highlights a column reading
+ * `[empty, O, empty]`, because one of the eight triples tests equal. Scoping to
+ * the lines through the mark that was just placed leaves only the lines this
+ * move could have completed, which is the question being asked.
+ */
 export function findTicTacToeWinningLine(
   board: TicTacToeBoard,
-  index: number
+  index?: number
 ): readonly [number, number, number] | null {
   for (const line of TICTACTOE_WINNING_LINES) {
-    if (!line.includes(index)) continue;
+    if (index !== undefined && !line.includes(index)) continue;
     const [a, b, c] = line;
     const cell = board[a];
     if (cell !== null && cell === board[b] && cell === board[c]) return line;
@@ -188,12 +198,29 @@ export function applyTicTacToeMove(
   if (vanishedIndex !== null) nextBoard[vanishedIndex] = null;
   nextBoard[index] = player;
 
+  // Scoped to the mark just played — see `findTicTacToeWinningLine`. Without the
+  // scope this reports a line some earlier move completed and that merely still
+  // happens to be on the board, and declares a win for a column that reads
+  // `[empty, O, empty]`.
   const winningLineMatch = findTicTacToeWinningLine(nextBoard, index);
+
   // Cell indices internally, board coordinates outside. Every consumer of a
   // result — the session, the views, the move log — speaks in coordinates, and
   // a nine-cell array index is a tic-tac-toe detail that would leak into all of
   // them if this field kept it.
-  const winningLine = winningLineMatch ? winningLineMatch.map(tictactoeCoordOf) : null;
+  //
+  // The re-check that the line is the *mover's* is the second half of the same
+  // guard: the search answers "is this line full of one colour", and the answer
+  // to "is that colour the player who just moved" is the only thing that makes
+  // it a win. Reporting a line without it would let an opponent's triple be
+  // returned as the mover's victory.
+  let winningLine: Coordinates[] | null = null;
+  if (winningLineMatch) {
+    const [a] = winningLineMatch;
+    if (nextBoard[a] === player) {
+      winningLine = winningLineMatch.map(tictactoeCoordOf);
+    }
+  }
 
   return {
     nextBoard,

@@ -1782,6 +1782,75 @@ describe("the winning line", () => {
     expect(keys(win.winningLine)).toEqual(["0,0", "1,0", "2,0"]);
   });
 
+  it("does not award a win for a line that some earlier move completed", () => {
+    // The regression this file exists for.
+    //
+    //     0 | 1 | 2      white  white  white   <- a full line, from earlier moves
+    //     3 | 4 | 5       —      —      —
+    //     6 | 7 | 8       —      —      —
+    //
+    // White's top row really is full, and an unscoped search over all eight
+    // lines really does return it. That is how Black was declared the winner on
+    // move 9 with a column highlighted green while that column read
+    // `[empty, O, empty]`: the search answered "is this triple full" when the
+    // question was "did THIS move complete a line of THIS player's".
+    //
+    // Black's marks are untouched by this move (Black holds none, so the FIFO
+    // vanishing rule removes nothing), which keeps the fixture minimal: the only
+    // thing that can report a win here is the unscoped search.
+    const board: TicTacToeBoard = [
+      "white", "white", "white",
+      null,    null,    null,
+      null,    null,    null,
+    ];
+
+    // The unscoped search does find a completed triple — proving the line really
+    // is there, and that scoping is the fix rather than the board being impossible.
+    expect(findTicTacToeWinningLine(board)).toEqual([0, 1, 2]);
+
+    // Scoped to the mark actually played (the centre, index 4), the only
+    // candidate lines are the four through it, and none of them is full.
+    expect(findTicTacToeWinningLine(board, 4)).toBeNull();
+
+    const move = applyTicTacToeMove(board, 4, "black");
+    expect(move.winner).toBeNull();
+    expect(move.winningLine).toBeNull();
+  });
+
+  it("still reports a real win on the line the mover just completed", () => {
+    // The guard above must not cost the game its wins: the same scoped search,
+    // pointed at a line this move really did fill, has to come back with it.
+    const board: TicTacToeBoard = [
+      "black", "black", null,
+      null,    null,    null,
+      null,    null,    null,
+    ];
+
+    // Black plays index 2, completing the top row. Black holds two marks and is
+    // about to hold three, so the vanishing rule removes nothing yet.
+    const move = applyTicTacToeMove(board, 2, "black");
+    expect(move.vanishedIndex).toBeNull();
+    expect(move.winner).toBe("black");
+    expect(keys(move.winningLine)).toEqual(["0,0", "1,0", "2,0"]);
+  });
+
+  it("breaks a stale line with the vanishing rule rather than reporting it", () => {
+    // Black already holds a full top row, so playing anywhere lifts mark 0 and
+    // breaks that row. The line was real a moment ago; after this move it is
+    // not, and reporting it would put three green cells on a live board.
+    const board: TicTacToeBoard = [
+      "black", "black", "black",
+      null,    null,    null,
+      null,    null,    null,
+    ];
+
+    const move = applyTicTacToeMove(board, 4, "black");
+    expect(move.vanishedIndex).toBe(0);
+    expect(move.nextBoard[0]).toBeNull();
+    expect(move.winner).toBeNull();
+    expect(move.winningLine).toBeNull();
+  });
+
   it("reports a connect four win as the four discs around the one just played", () => {
     let board = createInitialConnect4Board();
     // Black drops into columns 0, 1 and 2 — all on the bottom row — and White
