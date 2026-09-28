@@ -30,6 +30,30 @@ export interface BoardTileProps
   isLegalTarget?: boolean;
   /** Highlights the square touched by the most recent ply. */
   isLastMove?: boolean;
+  /**
+   * Marks the square as part of the winning line, and fills it with a wash.
+   *
+   * Chosen through the same one-ring chain as every other state rather than
+   * passed in through `className`, for the reason `selectedRingClass` exists:
+   * two `ring-*` utilities on one element is a conflict whose winner is
+   * stylesheet order, not intent. It outranks the last-move ring, because on a
+   * finished board the last move is nearly always *part of* the winning line —
+   * a highlight that lost to it would ring four stones and leave the deciding
+   * one bare.
+   *
+   * The wash is a child rather than a background utility for a second reason:
+   * the tile already carries a background (the cell colour, or the last-move
+   * wash), and `bg-*` is decided by stylesheet order for exactly the same
+   * reason the ring is. A child paints over whatever the tile's own background
+   * is, every time, without competing for it.
+   */
+  isWinning?: boolean;
+  /**
+   * Replaces the winning wash's shape outright. A tile's own radius is written
+   * in `className`, so a corner square and a disc square need different washes
+   * and the component cannot know either.
+   */
+  winningWashClass?: string;
   /** Hairline ring weight. Defaults to `"none"`. */
   emphasis?: BoardTileEmphasis;
   /**
@@ -105,6 +129,13 @@ const EMPHASIS_CLASSES: Record<BoardTileEmphasis, string> = {
 const DEFAULT_SELECTED_RING = "ring-2 ring-inset ring-board-dark";
 const LAST_MOVE_RING = "ring-2 ring-inset ring-amber-400/80";
 const DEFAULT_TARGET_DOT = "after:bg-board-dark/60";
+/**
+ * The winning ring, inset like the selection one: a ring painted *outside* a
+ * tile would be clipped by the board container's `overflow-hidden` on a cell
+ * that ends flush with its neighbour, so the innermost cells would lose the
+ * signal exactly where a line is most likely to run.
+ */
+const WINNING_RING = "ring-4 ring-inset ring-win";
 
 /**
  * A single interactive square on a game board.
@@ -123,6 +154,8 @@ export function BoardTile({
   selected = false,
   isLegalTarget = false,
   isLastMove = false,
+  isWinning = false,
+  winningWashClass,
   emphasis = "none",
   selectedRingClass,
   targetDotClass,
@@ -141,11 +174,15 @@ export function BoardTile({
   // emphasis ring and the tile would look different at different viewport
   // widths. Picking one here makes the result deterministic by construction,
   // and the two override props *replace* the default rather than joining it.
-  const ringClass = selected
-    ? (selectedRingClass ?? DEFAULT_SELECTED_RING)
-    : isLastMove
-      ? LAST_MOVE_RING
-      : EMPHASIS_CLASSES[emphasis];
+  // The winning line is asked for first, on purpose: it is the state a board
+  // is resting in, and it has to stay visible over the transient one.
+  const ringClass = isWinning
+    ? WINNING_RING
+    : selected
+      ? (selectedRingClass ?? DEFAULT_SELECTED_RING)
+      : isLastMove
+        ? LAST_MOVE_RING
+        : EMPHASIS_CLASSES[emphasis];
 
   return (
     <button
@@ -157,6 +194,7 @@ export function BoardTile({
       data-square={isLegalTarget ? "legal" : undefined}
       data-selected={selected ? "true" : undefined}
       data-last-move={isLastMove ? "true" : undefined}
+      data-winning={isWinning ? "true" : undefined}
       onContextMenu={(event) => {
         // Suppress the native long-press menu on desktop and iOS Safari.
         event.preventDefault();
@@ -191,6 +229,20 @@ export function BoardTile({
         className,
       )}
     >
+      {isWinning ? (
+        // A wash under the piece, not a background on the tile. Absolutely
+        // positioned so it takes no layout space, and rendered before
+        // `children` so a stone or a mark still paints on top of it rather than
+        // being tinted by it.
+        <span
+          aria-hidden="true"
+          data-winning-cell=""
+          className={cn(
+            "pointer-events-none absolute inset-0 bg-win-wash",
+            winningWashClass ?? (shape === "circle" ? "rounded-full" : "rounded-md")
+          )}
+        />
+      ) : null}
       {children}
     </button>
   );

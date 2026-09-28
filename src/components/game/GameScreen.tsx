@@ -141,6 +141,7 @@ export function GameScreen({
     legalSquares,
     destinations,
     vanishingSquares,
+    winningSquares,
     lastMove,
     rejectionMessage,
     isLocked,
@@ -220,6 +221,9 @@ export function GameScreen({
       // Tic-Tac-Toe is the only view that reads this; the rest ignore an empty
       // set rather than each having to branch on the game kind.
       vanishingSquares,
+      // Tic-Tac-Toe is the only view that reads this; the rest ignore an empty
+      // set rather than each having to branch on the game kind.
+      winningSquares,
       lastMove: lastMove ? { from: lastMove.from ?? null, to: lastMove.to } : null,
       disabled: isLocked || locked,
       onSquareActivate,
@@ -251,6 +255,8 @@ export function GameScreen({
     onSquareActivate,
     selectableSquares,
     selected,
+    vanishingSquares,
+    winningSquares,
   ]);
 
   const startNewGame = useCallback(() => {
@@ -325,6 +331,12 @@ export function GameScreen({
       isOnline={isOnline}
       pendingCount={queue.pendingCount}
       outcome={outcome}
+      // Whether there is a line on the board to look at, as opposed to a result
+      // that exists only as a score. A draw, a resignation and a Reversi
+      // comeback all have an outcome and none of them have four-in-a-row, and
+      // the shell has to be able to tell the two apart before it claims the
+      // board is showing something.
+      hasWinningLine={winningSquares.size > 0}
       onPlayAgain={startNewGame}
       onBackToLobby={() => router.push("/")}
       onRevalidate={conflict?.onRevalidate}

@@ -66,20 +66,28 @@ const MARKER_RATIO = 0.65;
 const STROKE = 12;
 const INSET = STROKE / 2;
 
-const X_COLOR = "#111827";
-const O_COLOR = "#DC2626";
+/**
+ * The two mark colours, as arbitrary-value utilities rather than `board-dark` and
+ * `board-light` tokens — see the note above on why this board refuses them. The
+ * white mark is the same red as `vanishing`, which is why a doomed O does not
+ * change colour and only a doomed X does; both glow.
+ */
+const MARK_COLOR_CLASS: Record<"black" | "white", string> = {
+  black: "text-[#111827]",
+  white: "text-[#DC2626]",
+};
 
 /**
  * The ring around a mark the next move will lift.
  *
- * `neutral-500` at 70% clears 3:1 against a `neutral-100` cell, which is what a
- * non-text indicator needs, and it is the same grey on both marks so the ring
- * never reads as part of the mark itself. `motion-safe` because a pulsing ring
- * on a board that sits still otherwise is exactly the kind of motion a player
- * turns on at the OS level and then finds waiting for them here.
+ * Red, because the ring and the mark now breathe in the same token: a warning
+ * drawn in the same hue as the thing at stake, pulsing at half the rate, reads
+ * as one event rather than two. `motion-safe` because a pulsing ring on a board
+ * that sits still otherwise is exactly the kind of motion a player turns on at
+ * the OS level and then finds waiting for them here.
  */
 const VANISHING_RING =
-  "pointer-events-none absolute inset-[6%] rounded-lg border-2 border-dashed border-neutral-500/70 motion-safe:animate-pulse";
+  "pointer-events-none absolute inset-[6%] rounded-lg border-2 border-dashed border-vanishing/80 motion-safe:animate-pulse";
 
 /**
  * An X or an O, drawn in a 100x100 viewBox and scaled by its cell.
@@ -87,22 +95,46 @@ const VANISHING_RING =
  * The `X` is two strokes and the `O` is a stroked ring rather than a filled
  * blob, so neither relies on fill alone to stay legible.
  */
-function Marker({ color }: { color: "black" | "white" }): React.ReactElement {
-  const stroke = color === "black" ? X_COLOR : O_COLOR;
+function Marker({
+  color,
+  isVanishing = false,
+}: {
+  color: "black" | "white";
+  isVanishing?: boolean;
+}): React.ReactElement {
   return (
     <span
       aria-hidden="true"
-      className="block"
+      data-mark={isVanishing ? "vanishing" : undefined}
+      // `currentColor` rather than a stroke hex, so the mark that is about to be
+      // lifted can take its colour from the same token the ring and the `breathe`
+      // keyframes read. Written as three literals it is a fourth place to
+      // remember to change the red.
+      className={cn(
+        "block",
+        isVanishing ? "text-vanishing" : MARK_COLOR_CLASS[color],
+        // Only the mark breathes. The mark also scales, so a `transition-all` on
+        // top of the animation would animate the keyframes a second time and
+        // fight them; the colour is inherited, so nothing needs a transition.
+        isVanishing && "motion-safe:animate-breathe"
+      )}
       style={{ width: `${MARKER_RATIO * 100}%`, aspectRatio: "1 / 1" }}
     >
       <svg viewBox="0 0 100 100" className="size-full" focusable="false">
         {color === "black" ? (
-          <g stroke={stroke} strokeWidth={STROKE} strokeLinecap="round">
+          <g stroke="currentColor" strokeWidth={STROKE} strokeLinecap="round">
             <line x1={INSET} y1={INSET} x2={100 - INSET} y2={100 - INSET} />
             <line x1={100 - INSET} y1={INSET} x2={INSET} y2={100 - INSET} />
           </g>
         ) : (
-          <circle cx={50} cy={50} r={50 - INSET} fill="none" stroke={stroke} strokeWidth={STROKE} />
+          <circle
+            cx={50}
+            cy={50}
+            r={50 - INSET}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={STROKE}
+          />
         )}
       </svg>
     </span>
@@ -117,6 +149,7 @@ export function TicTacToeBoardView({
   destinations,
   lastMove,
   vanishingSquares,
+  winningSquares,
   disabled,
   onSquareActivate,
   label,
@@ -162,18 +195,26 @@ export function TicTacToeBoardView({
         const coord: Coordinates = { x, y };
         const role = roles.get(coordKey(coord)) ?? "plain";
         const isVanishing = cell !== null && (vanishingSquares?.has(coordKey(coord)) ?? false);
+        const isWinning = winningSquares?.has(coordKey(coord)) ?? false;
 
         return (
           <BoardTile
             key={coordKey(coord)}
             label={`Square ${formatCoordinate(coord.x, coord.y)}${
               cell ? `, ${cell === "black" ? "black" : "white"} mark` : ", empty"
-            }${isVanishing ? ", lifts off the board if you play another mark" : ""}`}
+            }${isVanishing ? ", lifts off the board if you play another mark" : ""}${
+              isWinning ? ", part of the winning line" : ""
+            }`}
             size={size}
             disabled={disabled}
             selected={role === "selected"}
             isLegalTarget={role === "target" && !disabled}
             isLastMove={isLastMove(lastMove, coord)}
+            // A finished board is locked, so the win highlight is deliberately
+            // independent of `disabled`: the one thing a player is allowed to do
+            // with a finished board is look at it.
+            isWinning={isWinning}
+            winningWashClass="rounded-lg"
             onClick={() => onSquareActivate(coord)}
             className={cn(
               "h-full w-full rounded-lg",
@@ -187,7 +228,7 @@ export function TicTacToeBoardView({
               // sets of `after:` utilities on one pseudo-element.
             )}
           >
-            {cell !== null ? <Marker color={cell} /> : null}
+            {cell !== null ? <Marker color={cell} isVanishing={isVanishing} /> : null}
             {/* A sibling of the mark, not a wrapper around it: BoardTile already
                 centres its children, and a wrapper would have to re-create that
                 centring to avoid shifting the mark inside its cell. The ring is

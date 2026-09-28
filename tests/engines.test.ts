@@ -1762,6 +1762,129 @@ describe("hex engine", () => {
 /* Cross-engine invariants                                                   */
 /* -------------------------------------------------------------------------- */
 
+describe("the winning line", () => {
+  const keys = (line: readonly Coordinates[] | null | undefined) => (line ?? []).map((c) => `${c.x},${c.y}`);
+
+  it("names the three tic-tac-toe cells that made the line, and none before it", () => {
+    let board = createInitialTicTacToeBoard();
+    // Black 0 and 1, White 3 and 4: two marks each, no line, and so no line to
+    // report. A board that reported a "winning" three while the game was still
+    // running would put three green cells on a live match.
+    for (const [index, player] of [[0, "black"], [3, "white"], [1, "black"], [4, "white"]] as const) {
+      const result = applyTicTacToeMove(board, index, player);
+      expect(result.winner).toBeNull();
+      expect(result.winningLine).toBeNull();
+      board = result.nextBoard;
+    }
+
+    const win = applyTicTacToeMove(board, 2, "black");
+    expect(win.winner).toBe("black");
+    expect(keys(win.winningLine)).toEqual(["0,0", "1,0", "2,0"]);
+  });
+
+  it("reports a connect four win as the four discs around the one just played", () => {
+    let board = createInitialConnect4Board();
+    // Black drops into columns 0, 1 and 2 — all on the bottom row — and White
+    // answers out of the way in the far corner.
+    for (const [col, player] of [[0, "black"], [6, "white"], [1, "black"], [5, "white"], [2, "black"], [4, "white"]] as const) {
+      const result = applyConnect4Move(board, col, player);
+      expect(result.winner).toBeNull();
+      expect(result.winningLine).toBeNull();
+      board = result.nextBoard;
+    }
+
+    const win = applyConnect4Move(board, 3, "black");
+    expect(win.winner).toBe("black");
+    expect(win.placedRow).toBe(CONNECT4_ROWS - 1);
+    expect(keys(win.winningLine)).toEqual(["0,5", "1,5", "2,5", "3,5"]);
+  });
+
+  it("keeps a connect four highlight at four discs even on a five-disc run", () => {
+    // A five-disc run cannot be played: the game ended when the fourth
+    // connected. A hand-built board can still hold one, and the answer has to
+    // stay the number the rules say a win is.
+    const board = createInitialConnect4Board();
+    for (let row = 1; row <= 4; row += 1) board[row][0] = "black";
+
+    const win = applyConnect4Move(board, 0, "black");
+    expect(win.winningLine).toHaveLength(4);
+    // The disc just played is the one the player is looking at, so the window
+    // keeps it rather than centring on the run and dropping it.
+    expect(keys(win.winningLine)).toContain("0,5");
+  });
+
+  it("names the five gomoku stones, from whichever end the run was completed", () => {
+    let board = createInitialGomokuBoard();
+    // Black takes 4 through 7 on the middle row; White answers out of the way.
+    for (const [x, player] of [[4, "black"], [0, "white"], [5, "black"], [1, "white"], [6, "black"], [2, "white"], [7, "black"], [3, "white"]] as const) {
+      const result = applyGomokuMove(board, { x, y: 7 }, player);
+      expect(result.winningLine).toBeNull();
+      board = result.nextBoard;
+    }
+
+    // Completing the run from one end is the case a fixed two-and-two trim gets
+    // wrong: it would report three stones and leave a win looking like a near
+    // miss.
+    const win = applyGomokuMove(board, { x: 8, y: 7 }, "black");
+    expect(win.winner).toBe("black");
+    expect(keys(win.winningLine)).toEqual(["4,7", "5,7", "6,7", "7,7", "8,7"]);
+  });
+
+  it("keeps a gomoku highlight at five stones on a run of six", () => {
+    const board = createInitialGomokuBoard();
+    for (const x of [2, 3, 4, 5, 6]) board[7][x] = "black";
+
+    const win = applyGomokuMove(board, { x: 7, y: 7 }, "black");
+    expect(win.winningLine).toHaveLength(5);
+    expect(keys(win.winningLine)).toEqual(["3,7", "4,7", "5,7", "6,7", "7,7"]);
+  });
+
+  it("names a hex chain from one goal edge to the other", () => {
+    const board = createInitialHexBoard();
+    for (let y = 0; y < HEX_SIZE - 1; y += 1) board[y][3] = "black";
+    for (let y = 0; y < HEX_SIZE - 1; y += 1) board[y][0] = "white";
+
+    const stillRunning = applyHexMove(board, { x: HEX_SIZE - 1, y: HEX_SIZE - 1 }, "white");
+    expect(stillRunning.winner).toBeNull();
+    expect(stillRunning.winningLine).toBeNull();
+
+    const win = applyHexMove(board, { x: 3, y: HEX_SIZE - 1 }, "black");
+    expect(win.winner).toBe("black");
+    // Black connects top to bottom, so the path has to start on one and finish
+    // on the other — a chain reported from the middle would be a chain the
+    // player cannot check.
+    expect(win.winningLine).toHaveLength(HEX_SIZE);
+    expect(win.winningLine?.[0]?.y).toBe(0);
+    expect(win.winningLine?.[HEX_SIZE - 1]?.y).toBe(HEX_SIZE - 1);
+    expect(keys(win.winningLine)).toEqual(["3,0", "3,1", "3,2", "3,3", "3,4", "3,5", "3,6"]);
+  });
+
+  it("agrees with its own win check on hex, cell for cell", () => {
+    // The chain is found by walking the same graph the win test walks, so the
+    // two cannot drift. Pinned because the one way to make them disagree is to
+    // give the highlight a second, simpler idea of what a chain is.
+    const board = createInitialHexBoard();
+    for (let y = 0; y < HEX_SIZE - 1; y += 1) board[y][3] = "black";
+    for (let y = 0; y < HEX_SIZE - 1; y += 1) board[y][0] = "white";
+    expect(checkHexWin(board, "black")).toBe(false);
+    const win = applyHexMove(board, { x: 3, y: HEX_SIZE - 1 }, "black");
+    expect(checkHexWin(win.nextBoard, "black")).toBe(true);
+    for (const cell of win.winningLine ?? []) {
+      expect(win.nextBoard[cell.y]?.[cell.x]).toBe("black");
+    }
+  });
+
+  it("leaves the line out entirely for the two games that have none", () => {
+    // Reversi and Checkers are won by a count of discs. There is no line to
+    // point at, and a view handed an empty one must draw nothing rather than
+    // guess at a set of squares.
+    const reversi = createInitialReversiBoard();
+    const [first] = getValidReversiMoves(reversi, "black");
+    const result = applyReversiMove(reversi, first as Coordinates, "black");
+    expect("winningLine" in result).toBe(false);
+  });
+});
+
 describe("cross-engine invariants", () => {
   it("hands out a fresh board on every initialisation", () => {
     const initialisers = [

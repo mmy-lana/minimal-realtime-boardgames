@@ -127,6 +127,13 @@ export interface GameShellProps {
   readonly isOnline: boolean;
   readonly pendingCount: number;
   readonly outcome: GameOverReason | null;
+  /**
+   * Whether the board is currently drawing a winning line. The banner below
+   * announces that the line is highlighted, so it may only appear when it
+   * actually is: a draw, a resignation, a conflict and a Reversi count are all
+   * outcomes with no line on the board to point at.
+   */
+  readonly hasWinningLine?: boolean;
   readonly onPlayAgain: () => void;
   readonly onBackToLobby: () => void;
   readonly onRevalidate?: () => void;
@@ -141,6 +148,22 @@ export interface GameShellProps {
   readonly isSharedLink?: boolean;
   readonly onCopyLink?: () => void;
   readonly pieceCounts?: Readonly<Record<PlayerColor, number>>;
+}
+
+/** Inline arrow. See the note at the call site for why it is not a character. */
+function ArrowGlyph(): React.ReactElement {
+  return (
+    <svg viewBox="0 0 12 12" aria-hidden="true" className="size-3" focusable="false">
+      <path
+        d="M2 6 H9.5 M6.5 3 L9.5 6 L6.5 9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </svg>
+  );
 }
 
 function cellSizeFor(width: number): BoardCellSize {
@@ -167,6 +190,7 @@ export function GameShell({
   isOnline,
   pendingCount,
   outcome,
+  hasWinningLine = false,
   onPlayAgain,
   onBackToLobby,
   onRevalidate,
@@ -187,6 +211,19 @@ export function GameShell({
   const [showHelp, setShowHelp] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
   const isLiveMatch = status === "active";
+
+  // A result may be put away and asked for again. The board stays exactly where
+  // it was; only the dialog over the top of it goes.
+  const [showOutcomeDialog, setShowOutcomeDialog] = useState(true);
+  // Keyed on what the outcome *says*, not on the object. A finished match
+  // re-derives a fresh outcome on every acknowledgement from the sync queue, so
+  // a dependency on identity would push the dialog back up over a board the
+  // player had just put it away from.
+  const outcomeSignature =
+    outcome === null ? null : outcome.kind === "win" ? `win:${outcome.winner}` : outcome.kind;
+  useEffect(() => {
+    if (outcomeSignature !== null) setShowOutcomeDialog(true);
+  }, [outcomeSignature]);
 
   // The shell owns the responsive decision rather than letting CSS and JS
   // disagree: CSS handles the flex direction, and this handles cell size and
@@ -283,6 +320,42 @@ export function GameShell({
         {/* The board column expands to take all remaining space alongside the 320px rail */}
         <div className="flex w-full min-w-0 flex-1 flex-col items-center gap-4">
           {boardHeader}
+
+          {outcome && !showOutcomeDialog ? (
+            // The result, re-offered where the board is. A conflict never
+            // reaches here: it is not dismissible, so the question about
+            // whether the result can be trusted stays on screen until it is
+            // answered. Only a decided match has somewhere to go.
+            <div
+              className={cn(
+                "flex w-full max-w-sm flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-lg border px-3 py-2 text-center text-xs text-board-dark",
+                // Green only where there is a line on the board to match it. A
+                // draw or a resignation in a green box would be announcing a
+                // highlight that is not there.
+                hasWinningLine ? "border-win/40 bg-win-wash/60" : "border-hairline bg-board-subtle"
+              )}
+            >
+              {/* The status role sits on the sentence, not on the banner: a live
+                  region that also contains a button announces the button too,
+                  and "View match result" is an instruction, not news. */}
+              <span role="status">
+                {hasWinningLine
+                  ? "The winning line is highlighted on the board."
+                  : "This match is over. Review the board or the move list below."}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowOutcomeDialog(true)}
+                className="inline-flex items-center gap-1 font-medium text-board-dark underline underline-offset-2"
+              >
+                View match result
+                {/* Drawn, not typed: an arrow character is a glyph this app
+                    promises not to use, and one that renders differently on
+                    every platform that has it. */}
+                <ArrowGlyph />
+              </button>
+            </div>
+          ) : null}
 
           <BoardStage gameKind={gameKind} size={cellSize} isDesktop={isDesktop}>
             {board}
@@ -407,6 +480,8 @@ export function GameShell({
 
       <GameOverDialog
         outcome={outcome}
+        open={showOutcomeDialog}
+        onClose={() => setShowOutcomeDialog(false)}
         gameKind={gameKind}
         mode={mode}
         localSeat={localSeat}

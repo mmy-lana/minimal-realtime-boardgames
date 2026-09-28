@@ -257,6 +257,7 @@ export function useSupabaseRealtime(
       let board = engine.createInitialBoard();
       let winner: "black" | "white" | null = null;
       let isDraw = false;
+      let winningLine: Coordinates[] | null = null;
       try {
         // `replayMoves` takes the engine's own move shape, so the row shape is
         // projected rather than widened. A Reversi pass is re-derived from the
@@ -272,6 +273,7 @@ export function useSupabaseRealtime(
         board = replayed.board;
         winner = replayed.winner;
         isDraw = replayed.isDraw;
+        winningLine = replayed.winningLine;
       } catch (error) {
         raiseConflict(
           describeError(error, "The recorded moves could not be replayed from the opening position.")
@@ -310,6 +312,11 @@ export function useSupabaseRealtime(
         })),
         turnNumber: moves.length,
         winner: winner ?? session.winner,
+        // From the replay, because this client may have watched none of the
+        // plies. A room still in progress reports no line, which is also the
+        // right thing to store — a line from a game that has been reset away
+        // must not outlive it.
+        winningLine,
         ...(isDraw ? { status: "draw" as const } : {}),
         updatedAt: Date.now(),
         syncState: "synced",

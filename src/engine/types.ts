@@ -400,6 +400,19 @@ export interface GameSession {
   boardSnapshot: UniversalBoard;
   history: MoveRecord[];
   winner: PlayerColor | null;
+  /**
+   * The cells that decided the game, or `null` while it is undecided and on a
+   * draw. Optional because a row read back from a store written before this
+   * field existed has no value for it — `null` and "absent" are the same fact
+   * here, and a persisted session must not be rejected for lacking one.
+   *
+   * It is *not* derivable from the board: a Hex chain has many possible
+   * crossing paths, and Connect Four a winning disc has several runs through
+   * it. Only the search that ended the game knows which one it took, so the
+   * answer is recorded where it is produced rather than recomputed where it is
+   * shown.
+   */
+  winningLine?: Coordinates[] | null;
   createdAt: number;
   updatedAt: number;
   syncState: SyncState;

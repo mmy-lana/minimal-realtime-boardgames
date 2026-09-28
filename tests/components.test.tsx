@@ -608,6 +608,116 @@ describe("GameOverDialog", () => {
     expect(screen.getByText("Move 14 differs between the two copies.")).toBeTruthy();
     expect(document.querySelector("[data-winner-badge]")).toBeNull();
   });
+
+  it("keeps the old permanent result screen for a caller that cannot reopen it", () => {
+    // Without an `onClose` there is nowhere to put the dialog, so Escape and
+    // the close button have to be absent rather than present and inert. A close
+    // button that closes nothing is worse than no close button: the player
+    // presses it, sees the same screen, and concludes the app is broken.
+    render(
+      <GameOverDialog
+        outcome={{ kind: "win", winner: "black" }}
+        gameKind="tictactoe"
+        mode="offline_local"
+        localSeat="black"
+        onPlayAgain={() => {}}
+        onBackToLobby={() => {}}
+      />
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /inspect board/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^close /i })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("stays out of the way until it is wanted", () => {
+    // A caller that manages its own visibility gets a component that really
+    // renders nothing. Rendering an invisible-but-present dialog is the failure
+    // that leaves a screen reader announcing a result nobody opened.
+    const { container } = render(
+      <GameOverDialog
+        outcome={{ kind: "win", winner: "black" }}
+        gameKind="tictactoe"
+        mode="offline_local"
+        localSeat="black"
+        open={false}
+        onClose={() => {}}
+        onPlayAgain={() => {}}
+        onBackToLobby={() => {}}
+      />
+    );
+    expect(container.innerHTML).toBe("");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("lets a player send the dialog away and come back to it", () => {
+    const onClose = vi.fn();
+    const onPlayAgain = vi.fn();
+    const { unmount } = render(
+      <GameOverDialog
+        outcome={{ kind: "win", winner: "black" }}
+        gameKind="tictactoe"
+        mode="offline_local"
+        localSeat="black"
+        onClose={onClose}
+        onPlayAgain={onPlayAgain}
+        onBackToLobby={() => {}}
+      />
+    );
+
+    // Inspecting the board is not ending the match, so the button says so and
+    // closes nothing else on its way past.
+    const inspect = screen.getByRole("button", { name: /inspect board/i });
+    expect(inspect.getAttribute("aria-label")).toBeNull();
+    fireEvent.click(inspect);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onPlayAgain).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("closes on Escape only when the copy is not in conflict", () => {
+    // A conflict is the one state that must not be waved away: the two copies
+    // disagree, and the only useful next step is re-checking against the server.
+    // A dismissible dialog here would lose the player's way back to that.
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <GameOverDialog
+        outcome={{ kind: "win", winner: "black" }}
+        gameKind="tictactoe"
+        mode="online_realtime"
+        localSeat="black"
+        onClose={onClose}
+        onPlayAgain={() => {}}
+        onBackToLobby={() => {}}
+      />
+    );
+    // A decided match is dismissible, and says how: the board is one Escape
+    // away, and so is the button.
+    expect(screen.getByRole("button", { name: /inspect board/i })).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+
+    const onCloseConflict = vi.fn();
+    const conflict = render(
+      <GameOverDialog
+        outcome={{ kind: "conflict", detail: "divergent" }}
+        gameKind="hex"
+        mode="online_realtime"
+        localSeat="black"
+        onClose={onCloseConflict}
+        onRevalidate={() => {}}
+        onPlayAgain={() => {}}
+        onBackToLobby={() => {}}
+        conflictDetail="Move 14 differs between the two copies."
+      />
+    );
+    expect(screen.queryByRole("button", { name: /inspect board/i })).toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onCloseConflict).not.toHaveBeenCalled();
+    conflict.unmount();
+  });
 });
 
 describe("BoardTile target markers", () => {

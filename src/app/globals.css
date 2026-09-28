@@ -27,6 +27,17 @@
   --color-status-error: #b91c1c;
   --color-status-idle: #737373;
 
+  /* The winning line. Deliberately *not* `status-live`: a live match is not a
+     won one, and a green that means both says neither. `win-wash` is the same
+     hue at a fifth of the strength, for a fill that sits *under* a stone
+     rather than a ring that sits around it. */
+  --color-win: #10b981;
+  --color-win-wash: #d1fae5;
+  /* The mark a player is about to lose off the board. Read by the `breathe`
+     keyframes below and by the board view that draws the mark, so the glow and
+     the mark it surrounds cannot drift apart. */
+  --color-vanishing: #dc2626;
+
   /* Typography */
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
@@ -41,6 +52,37 @@
   /* Motion — reduced-motion friendly and never slower than a frame budget. */
   --animate-fade-in: fade-in 120ms ease-out;
   --animate-slide-up: slide-up 160ms ease-out;
+  --animate-breathe: breathe 1000ms ease-in-out infinite;
+}
+
+/**
+ * The breath of a mark that is about to be lifted off the board.
+ *
+ * Three properties move together on purpose. Opacity alone reads as a flicker
+ * and a lone `scale` reads as a zoom; a mark that is dimming *and* shrinking
+ * *and* glowing is unmistakably fading, which is what the rule is about. The
+ * `50%` frame is the dim one, so the mark spends most of the cycle looking like
+ * a mark — a viewer's eye finds it immediately instead of hunting for a
+ * half-visible shape.
+ *
+ * The glow is red because the thing being announced is a loss. It comes from the
+ * token the view uses to draw the mark, so the two cannot disagree.
+ *
+ * One second per cycle: long enough to read as a rhythm rather than a flicker,
+ * short enough that a player watching a nine-cell board is not waiting on it.
+ */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px var(--color-vanishing));
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.92);
+    filter: drop-shadow(0 0 8px var(--color-vanishing));
+  }
 }
 
 @keyframes fade-in {

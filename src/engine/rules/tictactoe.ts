@@ -62,6 +62,13 @@ export interface TicTacToeMoveResult {
    * `null` when the player held fewer than three marks and nothing moved.
    */
   vanishedIndex: number | null;
+  /**
+   * The three cells that decided the game, in board order along the line, or
+   * `null` while it is undecided. Reported rather than recomputed downstream:
+   * which line won is a property of the *move*, and the mark that completed it
+   * is the one a player wants shown when the result is read.
+   */
+  winningLine: Coordinates[] | null;
 }
 
 export function createInitialTicTacToeBoard(): TicTacToeBoard {
@@ -181,11 +188,18 @@ export function applyTicTacToeMove(
   if (vanishedIndex !== null) nextBoard[vanishedIndex] = null;
   nextBoard[index] = player;
 
-  const winningLine = findTicTacToeWinningLine(nextBoard, index);
+  const winningLineMatch = findTicTacToeWinningLine(nextBoard, index);
+  // Cell indices internally, board coordinates outside. Every consumer of a
+  // result — the session, the views, the move log — speaks in coordinates, and
+  // a nine-cell array index is a tic-tac-toe detail that would leak into all of
+  // them if this field kept it.
+  const winningLine = winningLineMatch ? winningLineMatch.map(tictactoeCoordOf) : null;
+
   return {
     nextBoard,
     winner: winningLine ? player : null,
     isDraw: false,
     vanishedIndex,
+    winningLine,
   };
 }

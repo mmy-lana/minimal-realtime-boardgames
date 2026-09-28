@@ -225,6 +225,349 @@ describe("GameShell rules dialog", () => {
   });
 });
 
+describe("GameShell board review", () => {
+  const wonMatch = {
+    outcome: { kind: "win", winner: "black" } as const,
+    status: "won_black" as const,
+  };
+
+  /**
+   * The shell already keeps a live region for the connection, so `getByRole
+   * ("status")` is ambiguous here and the banner has to be found by its
+   * sentence — the thing a player actually reads.
+   */
+  const HIGHLIGHTED = "The winning line is highlighted on the board.";
+  const NO_LINE = "This match is over. Review the board or the move list below.";
+
+  function bannerSentence(): HTMLElement {
+    // Exact text and an element that is the sentence itself. Matching on
+    // "contains" instead would also find the shell's own connection status,
+    // whose direct text is empty and therefore contained by everything.
+    return screen.getByText(
+      (content, element) =>
+        element?.tagName === "SPAN" &&
+        element.getAttribute("role") === "status" &&
+        (content === NO_LINE || content === HIGHLIGHTED)
+    );
+  }
+
+  function bannerText(): string {
+    return bannerSentence().textContent ?? "";
+  }
+
+  function dismissOutcome(): void {
+    // The shell always passes an `onClose`, so a decided match offers "Inspect
+    // board" and, being dismissible, the modal's own close button too. Either
+    // route means the same thing to the shell.
+    const inspect = screen.queryByRole("button", { name: /inspect board/i });
+    fireEvent.click(inspect ?? screen.getByRole("button", { name: /^close /i }));
+  }
+
+  it("puts the result away and offers it back in place", () => {
+    // The complaint: the result dialog covered the board the moment a match
+    // ended, and dismissing it left no way back. The board stays put, the
+    // result goes behind it, and a banner on the board offers it again.
+    const { unmount } = render(<GameShell {...shellProps({ ...wonMatch, hasWinningLine: true })} />);
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    dismissOutcome();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    expect(bannerText()).toBe(HIGHLIGHTED);
+
+    fireEvent.click(screen.getByRole("button", { name: /view match result/i }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    unmount();
+  });
+
+  it("does not put the result back when the board merely re-renders", () => {
+    // Every acknowledgement from the sync queue hands the shell a new outcome
+    // object for the same finished match. Keyed on the object rather than on
+    // what it says, the dialog would re-open over the board the player had just
+    // asked to look at — the exact thing the button was for.
+    const { rerender, unmount } = render(
+      <GameShell {...shellProps({ ...wonMatch, hasWinningLine: true })} />
+    );
+    dismissOutcome();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    rerender(
+      <GameShell
+        {...shellProps({
+          ...wonMatch,
+          hasWinningLine: true,
+          // A new object, the same result: what an acknowledgement delivers.
+          outcome: { kind: "win", winner: "black" },
+          pendingCount: 0,
+        })}
+      />
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: /view match result/i })).toBeTruthy();
+    unmount();
+  });
+
+  it("re-opens for a different result", () => {
+    // The banner must not become a one-way door: a *different* outcome is a
+    // new piece of news, and it is the case the effect is actually for.
+    const { rerender, unmount } = render(
+      <GameShell {...shellProps({ ...wonMatch, hasWinningLine: true })} />
+    );
+    dismissOutcome();
+
+    rerender(
+      <GameShell
+        {...shellProps({
+          outcome: { kind: "conflict", detail: "divergent" },
+          status: "active" as const,
+          conflictDetail: "Move 14 differs between the two copies.",
+          onRevalidate: vi.fn(),
+        })}
+      />
+    );
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    unmount();
+  });
+
+  it("claims a highlight on the board only for an outcome that has one", () => {
+    // Three finished matches, one highlight. A draw and a resignation have no
+    // line to point at, and a green box around "this match is over" would be
+    // promising a highlight the board is not drawing.
+    for (const [outcome, hasWinningLine, expected] of [
+      [{ kind: "draw" }, false, NO_LINE],
+      [{ kind: "abandoned" }, false, NO_LINE],
+      [{ kind: "win", winner: "black" }, true, HIGHLIGHTED],
+    ] as ReadonlyArray<readonly [Record<string, unknown>, boolean, string]>) {
+      const { unmount } = render(
+        <GameShell {...shellProps({ outcome, status: "won_black" as const, hasWinningLine })} />
+      );
+      dismissOutcome();
+      expect(screen.queryByRole("dialog")).toBeNull();
+
+      const sentence = bannerSentence();
+      expect(sentence.textContent).toBe(expected);
+      // Green is the colour of a line on the board, so the green wash goes in
+      // with the line and never without it.
+      const banner = sentence.closest("div")!;
+      const wantsGreen = expected === HIGHLIGHTED;
+      expect(banner.className.includes("bg-win-wash")).toBe(wantsGreen);
+      expect(banner.className.includes("border-win")).toBe(wantsGreen);
+      expect(banner.className.includes("bg-board-subtle")).toBe(!wantsGreen);
+      unmount();
+    }
+  });
+
+  it("shows no banner at all while the match is running", () => {
+    // A banner on a live match is a result nobody earned, and it pushes the
+    // board down the page for as long as the match runs.
+    render(<GameShell {...shellProps()} />);
+    expect(screen.queryByRole("button", { name: /view match result/i })).toBeNull();
+    expect(screen.queryByText(/winning line is highlighted|review the board or the move list/i)).toBeNull();
+  });
+
+  it("draws the arrow rather than typing it", () => {
+    // The app promises not to use arrow characters: they render differently on
+    // every platform and are not the one thing this repo sweeps for.
+    const { container, unmount } = render(
+      <GameShell {...shellProps({ ...wonMatch, hasWinningLine: true })} />
+    );
+    dismissOutcome();
+    const button = screen.getByRole("button", { name: /view match result/i });
+    expect(button.querySelector("svg")).toBeTruthy();
+    expect(button.textContent ?? "").not.toMatch(/[\u2190-\u21ff]/);
+    expect(container.innerHTML).not.toContain("&rarr;");
+    unmount();
+  });
+});
+
+describe("the winning line on the board", () => {
+  /**
+   * Four real games, each played move by move through the engine, each ending
+   * the way a player would end it. The highlight the view is given is the line
+   * the engine itself reported on the final move, so the number of cells the
+   * engine claims and the number of cells the board lights cannot drift apart
+   * unnoticed: they come from the same call.
+   */
+  const WON_GAMES: ReadonlyArray<{
+    kind: GameKind;
+    expected: number;
+    moves: ReadonlyArray<readonly [Coordinates, PlayerColor]>;
+  }> = [
+    {
+      kind: "tictactoe",
+      expected: 3,
+      moves: [
+        [{ x: 0, y: 0 }, "black"],
+        [{ x: 1, y: 1 }, "white"],
+        [{ x: 0, y: 1 }, "black"],
+        [{ x: 2, y: 2 }, "white"],
+        [{ x: 0, y: 2 }, "black"],
+      ],
+    },
+    {
+      // Black fills the bottom row from the left; White answers at the right
+      // and reaches three of its own, which is not yet the four a win needs.
+      kind: "connect4",
+      expected: 4,
+      moves: [
+        [{ x: 0, y: 0 }, "black"],
+        [{ x: 6, y: 0 }, "white"],
+        [{ x: 1, y: 0 }, "black"],
+        [{ x: 5, y: 0 }, "white"],
+        [{ x: 2, y: 0 }, "black"],
+        [{ x: 4, y: 0 }, "white"],
+        [{ x: 3, y: 0 }, "black"],
+      ],
+    },
+    {
+      // Five in a row on the middle row. White's four down the same row stop
+      // short, which is the only reason the fixture reaches a Black win.
+      kind: "gomoku",
+      expected: 5,
+      moves: [
+        [{ x: 4, y: 7 }, "black"],
+        [{ x: 0, y: 7 }, "white"],
+        [{ x: 5, y: 7 }, "black"],
+        [{ x: 1, y: 7 }, "white"],
+        [{ x: 6, y: 7 }, "black"],
+        [{ x: 2, y: 7 }, "white"],
+        [{ x: 7, y: 7 }, "black"],
+        [{ x: 3, y: 7 }, "white"],
+        [{ x: 8, y: 7 }, "black"],
+      ],
+    },
+    {
+      // A column through all seven rows. White stays on the near two columns,
+      // so it never reaches the right-hand goal edge.
+      kind: "hex",
+      expected: 7,
+      moves: [
+        [{ x: 3, y: 0 }, "black"],
+        [{ x: 0, y: 0 }, "white"],
+        [{ x: 3, y: 1 }, "black"],
+        [{ x: 1, y: 6 }, "white"],
+        [{ x: 3, y: 2 }, "black"],
+        [{ x: 0, y: 2 }, "white"],
+        [{ x: 3, y: 3 }, "black"],
+        [{ x: 1, y: 3 }, "white"],
+        [{ x: 3, y: 4 }, "black"],
+        [{ x: 0, y: 4 }, "white"],
+        [{ x: 3, y: 5 }, "black"],
+        [{ x: 3, y: 6 }, "black"],
+      ],
+    },
+  ];
+
+  function playToWin(kind: GameKind, moves: ReadonlyArray<readonly [Coordinates, PlayerColor]>) {
+    const engine = getSessionEngine(kind);
+    let board = engine.createInitialBoard();
+    let line: Coordinates[] = [];
+    for (const [to, player] of moves) {
+      const result = engine.applyMove(board, { to }, player);
+      board = result.board;
+      line = result.winningLine ?? [];
+    }
+    return { board, line };
+  }
+
+  async function renderWonBoard(kind: GameKind, board: unknown, winningSquares: Set<string>) {
+    const load = BOARD_VIEWS.find(([entry]) => entry === kind)![1];
+    const View = (await load()) as React.ComponentType<Record<string, unknown>>;
+    return render(
+      <View
+        board={board}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        winningSquares={winningSquares}
+        disabled
+        onSquareActivate={() => {}}
+        label={`${kind} board`}
+        size="sm"
+      />
+    );
+  }
+
+  for (const game of WON_GAMES) {
+    it(`washes exactly the cells that decided a finished ${game.kind}`, async () => {
+      const { board, line } = playToWin(game.kind, game.moves);
+      expect(line).toHaveLength(game.expected);
+
+      const { container, unmount } = await renderWonBoard(
+        game.kind,
+        board,
+        new Set(line.map(coordKey))
+      );
+
+      // One wash per cell, and no others: a highlight that covers half a
+      // winning line is not a highlight, and one that covers the whole board
+      // is a lie about which stones mattered.
+      expect(container.querySelectorAll("[data-winning-cell]")).toHaveLength(game.expected);
+      unmount();
+    });
+
+    it(`draws no highlight on a ${game.kind} that is still running`, async () => {
+      const { board } = playToWin(game.kind, game.moves.slice(0, 2));
+      const { container, unmount } = await renderWonBoard(game.kind, board, new Set());
+
+      expect(container.querySelectorAll("[data-winning-cell]")).toHaveLength(0);
+      expect(container.querySelectorAll("[data-winning]")).toHaveLength(0);
+      unmount();
+    });
+  }
+
+  it("rings a winning cell in the win colour and not the last-move colour", async () => {
+    // The last move of every fixture is the winning move, so every winning
+    // board below has a square that is both. The board has to choose: two rings
+    // on one tile is undecidable by eye, and the amber "that was the last
+    // move" ring is the one that lies about a finished game, because it points
+    // at a move that no longer matters.
+    for (const kind of ["tictactoe", "gomoku", "hex"] as const) {
+      const game = WON_GAMES.find((entry) => entry.kind === kind)!;
+      const { board, line } = playToWin(kind, game.moves);
+      const { container, unmount } = await renderWonBoard(kind, board, new Set(line.map(coordKey)));
+
+      const winningTiles = [...container.querySelectorAll("[data-winning]")];
+      expect(winningTiles, `${kind} should mark its winning tiles`).toHaveLength(game.expected);
+      for (const tile of winningTiles) {
+        const className = tile.getAttribute("class") ?? "";
+        expect(className, `${kind} winning tile`).toContain("ring-win");
+        expect(className, `${kind} winning tile`).not.toContain("ring-amber");
+        // The invariant BoardTile is built around: one ring, chosen once.
+        expect(className.match(/(?:^|\s)ring-\d+/g), `${kind} ring count`).toHaveLength(1);
+        // And a screen reader is told the same thing the eye is shown.
+        expect(tile.getAttribute("aria-label") ?? "").toMatch(/winning (line|chain)/i);
+      }
+      unmount();
+    }
+  });
+
+  it("rings the winning discs on a connect four playfield", async () => {
+    const game = WON_GAMES.find((entry) => entry.kind === "connect4")!;
+    const { board, line } = playToWin("connect4", game.moves);
+    const { container, unmount } = await renderWonBoard("connect4", board, new Set(line.map(coordKey)));
+
+    const playfield = container.querySelector("[data-c4-playfield]")!;
+    const highlighted = [...playfield.querySelectorAll("[data-winning-cell]")];
+    expect(highlighted).toHaveLength(4);
+    for (const wash of highlighted) {
+      // The ring is on the socket that holds the wash, which is the one part
+      // of a cell with room to glow — so the assertion follows it up a level
+      // rather than looking for a ring on the wash itself.
+      const socket = wash.parentElement!;
+      const className = socket.getAttribute("class") ?? "";
+      expect(className).toContain("ring-win");
+      // The newest disc wears amber; on a won playfield that ring has to give
+      // way, or the board points at a disc that did not decide anything.
+      expect(className).not.toContain("ring-amber");
+      expect(className.match(/(?:^|\s)ring-\d+/g)).toHaveLength(1);
+    }
+    unmount();
+  });
+});
+
 describe("board sizing", () => {
   it("locks the frame so nothing a player does can resize it", () => {
     // The stage is two boxes: a rigid frame whose geometry comes from the
@@ -666,13 +1009,21 @@ describe("board sizing", () => {
 
     const strokes = [...container.querySelectorAll("svg g[stroke], svg circle[stroke]")];
     expect(strokes).toHaveLength(2);
-    const colors = strokes.map((s) => s.getAttribute("stroke"));
+    // The stroke is `currentColor` and the colour rides on the mark's wrapper,
+    // which is what lets the vanishing mark take the same red the ring and the
+    // `breathe` keyframes use.
+    for (const stroke of strokes) expect(stroke.getAttribute("stroke")).toBe("currentColor");
+    // `closest`, because on an `<svg>` `className` is an `SVGAnimatedString`
+    // rather than the string the `text-*` utility is on.
+    const colors = strokes.map((stroke) => (stroke.closest("span") as HTMLElement).className);
     // The bug: these were `board-dark`/`board-light` theme tokens chosen to
     // contrast with the *page*, and the cells here are light. A white mark on a
     // light cell is not there at all.
-    expect(colors).toContain("#111827");
-    expect(colors).toContain("#DC2626");
-    for (const color of colors) expect(color).not.toBe("var(--color-board-light)");
+    expect(colors.map((name) => name.trim())).toEqual(["block text-[#111827]", "block text-[#DC2626]"]);
+    for (const color of colors) {
+      expect(color).not.toContain("text-board-light");
+      expect(color).not.toContain("text-board-dark");
+    }
 
     // Both marks are 65% of their cell, and the strokes are the same weight.
     for (const mark of container.querySelectorAll("svg")) {
@@ -821,6 +1172,10 @@ describe("board sizing", () => {
         (child) =>
           child.tagName === "SPAN" &&
           child.getAttribute("aria-hidden") === "true" &&
+          // The winning wash is a span for the same reason a ghost is, but it
+          // marks a finished game rather than a move, and it is not competing
+          // with the pseudo-element marker for the same fact.
+          !child.hasAttribute("data-winning-cell") &&
           !child.textContent
       ).length;
 

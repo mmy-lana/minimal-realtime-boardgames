@@ -55,6 +55,20 @@ export type GameOverReason =
 export interface GameOverDialogProps {
   /** `null` keeps the dialog closed. */
   readonly outcome: GameOverReason | null;
+  /**
+   * Closes the dialog without ending the match.
+   *
+   * A result dialog is modal by design, but a finished board is the one thing
+   * in the app worth looking at properly — the winning line is drawn on it, and
+   * a dialog that covers the board to announce a result the board is already
+   * showing hides the better half of the news. So the dialog is closable, and
+   * the shell offers the same result again as a banner. Omitted, the dialog is
+   * permanent, which is the right behaviour for a conflict and the historical
+   * one everywhere else.
+   */
+  readonly open?: boolean;
+  /** Offers "Inspect Board" and the Escape/backdrop exits. */
+  readonly onClose?: () => void;
   readonly gameKind: GameKind;
   /**
    * Which mode the result is being reported in. It changes the copy, not the
@@ -177,6 +191,8 @@ function WinnerBadge({ winner }: { winner: PlayerColor }): React.ReactElement {
 
 export function GameOverDialog({
   outcome,
+  open = true,
+  onClose,
   gameKind,
   mode,
   localSeat,
@@ -186,20 +202,25 @@ export function GameOverDialog({
   onBackToLobby,
   conflictDetail,
 }: GameOverDialogProps): React.ReactElement | null {
-  if (!outcome) return null;
+  if (!outcome || !open) return null;
   const isConflict = outcome.kind === "conflict";
   // A conflict is never dismissible into a state where the player believes the
   // result stands, so it has no Escape or backdrop exit and no "play again" —
   // the only way forward is an explicit reconciliation. A finished match, by
-  // contrast, can be closed out with the actions below.
+  // contrast, can be put away with the actions below, or with Escape once
+  // there is somewhere to put it back to.
 
   return (
     <Modal
       open
-      // `dismissible={false}` is what makes this a result screen rather than
-      // a piece of ambient UI.
-      dismissible={false}
-      onClose={() => undefined}
+      // A result screen rather than a piece of ambient UI — with two exceptions,
+      // and both are "there is nowhere to put it": a conflict, which is not a
+      // result at all but a question about whether the result can be trusted and
+      // must not be swiped aside, and a caller that gave no `onClose`, which is
+      // asking for the permanent result screen this used to be. Handing `Modal`
+      // a function either way would light a close button that closes nothing.
+      dismissible={!isConflict && onClose !== undefined}
+      onClose={onClose}
       title={headline(outcome, mode, localSeat)}
       headerAccessory={outcome.kind === "win" ? <WinnerBadge winner={outcome.winner} /> : undefined}
       panelClassName="max-w-md"
@@ -222,6 +243,14 @@ export function GameOverDialog({
           <Button variant="secondary" onClick={onBackToLobby}>
             Back to games
           </Button>
+          {onClose && !isConflict ? (
+            // The middle option, and the only one that is not about the match:
+            // it says the board is worth looking at, and makes sure a player
+            // who never noticed the winning line can still find it.
+            <Button variant="secondary" onClick={onClose}>
+              Inspect board
+            </Button>
+          ) : null}
           {isConflict ? (
             <Button
               variant="primary"

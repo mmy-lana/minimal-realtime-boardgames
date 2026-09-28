@@ -95,6 +95,16 @@ export interface EngineMoveResult {
   winner: PlayerColor | null;
   isDraw: boolean;
   /**
+   * The cells that ended the game, or `null` while it is undecided.
+   *
+   * Optional, and optional for a reason: it is `undefined` for the two games
+   * with no line to point at — Reversi is decided by a disc count and Checkers
+   * by a count of pieces captured and left on the board — and every caller has
+   * to cope with a game that simply has none. `null` means "this game has lines
+   * and there is not one yet".
+   */
+  winningLine?: Coordinates[] | null;
+  /**
    * `true` when the mover keeps the turn because the opponent has no legal
    * reply. Only Reversi can produce this, and the fact is recorded in the
    * move's payload so a replay reproduces it.
@@ -226,6 +236,7 @@ const ticTacToeEngine: SessionEngine = {
       // A constant rather than a check: three marks a side can never fill nine
       // cells, so this game has no draw to detect.
       isDraw: result.isDraw,
+      winningLine: result.winningLine,
       passesTurn: false,
     };
   },
@@ -254,6 +265,7 @@ const connectFourEngine: SessionEngine = {
       board: { kind: "connect4", state: result.nextBoard },
       winner: result.winner,
       isDraw: result.isDraw,
+      winningLine: result.winningLine,
       passesTurn: false,
     };
   },
@@ -283,6 +295,7 @@ const gomokuEngine: SessionEngine = {
       board: { kind: "gomoku", state: result.nextBoard },
       winner: result.winner,
       isDraw: result.isDraw,
+      winningLine: result.winningLine,
       passesTurn: false,
     };
   },
@@ -412,6 +425,7 @@ const hexEngine: SessionEngine = {
       // Hex is decided by the Hex theorem, so a room can never reach a tie and
       // the status ladder below never has to represent one for this kind.
       isDraw: result.isDraw,
+      winningLine: result.winningLine,
       passesTurn: false,
     };
   },
@@ -457,12 +471,25 @@ export function replayMoves(
   board: UniversalBoard,
   moves: readonly { player: PlayerColor; from?: Coordinates; to: Coordinates }[],
   options: { passesTurn?: (index: number) => boolean } = {}
-): { board: UniversalBoard; winner: PlayerColor | null; isDraw: boolean } {
+): {
+  board: UniversalBoard;
+  winner: PlayerColor | null;
+  isDraw: boolean;
+  /**
+   * The line that ended the game, or `null` while the replayed game is still
+   * running. Carried out of the replay for the same reason the session carries
+   * it in: a client that adopts a room it did not play has no other way to know
+   * which five stones won, and it must not answer that by searching the board
+   * a second time.
+   */
+  winningLine: Coordinates[] | null;
+} {
   const engine = getSessionEngine(board.kind);
   let current = board;
   let expectedPlayer: PlayerColor = "black";
   let winner: PlayerColor | null = null;
   let isDraw = false;
+  let winningLine: Coordinates[] | null = null;
   // The plies replayed so far, handed to each engine as its context. A rule
   // that reads the log — Tic-Tac-Toe's vanishing order — has to read *this*
   // log, the one being replayed, and not a stale or empty one: the replay has
@@ -503,6 +530,9 @@ export function replayMoves(
     current = result.board;
     winner = result.winner;
     isDraw = result.isDraw;
+    // Last one wins, and a game that is still running reports none — so this is
+    // the line of the move that ended it, or `null`.
+    winningLine = result.winningLine ?? null;
 
     const passes = options.passesTurn?.(index) ?? result.passesTurn;
     if (passes) {
@@ -513,5 +543,5 @@ export function replayMoves(
     expectedPlayer = opponentOf(move.player);
   }
 
-  return { board: current, winner, isDraw };
+  return { board: current, winner, isDraw, winningLine };
 }

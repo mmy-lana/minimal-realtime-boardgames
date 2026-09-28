@@ -3,7 +3,7 @@
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { CheckersCell, PlayerColor, UniversalBoard } from "@/engine/types";
+import type { CheckersCell, Coordinates, PlayerColor, UniversalBoard } from "@/engine/types";
 
 /**
  * Section 4.2 — the `useGameSession` state machine.
@@ -223,6 +223,67 @@ describe("useGameSession on a place-a-stone game", () => {
     // so the hint is empty — the same emptiness a locked realtime board gets.
     expect(result.current.isLocked).toBe(true);
     expect(result.current.vanishingSquares).toEqual(new Set());
+  });
+
+  it("hands the board the cells that won, and forgets them the moment a new game starts", async () => {
+    const { result } = renderHook(() => useGameSession(localSession()));
+
+    // Nothing is at stake on an empty board, so the board is handed an empty
+    // set rather than no set at all.
+    expect(result.current.winningSquares).toEqual(new Set());
+
+    for (const to of [
+      { x: 0, y: 0 }, // black
+      { x: 1, y: 1 }, // white
+      { x: 0, y: 1 }, // black
+      { x: 2, y: 2 }, // white
+      { x: 0, y: 2 }, // black — the left column
+    ]) {
+      await act(async () => {
+        await result.current.makeMove(to);
+      });
+    }
+
+    // Black completed the left column on the fifth ply.
+    expect(result.current.session?.status).toBe("won_black");
+    expect(result.current.winningSquares).toEqual(new Set(["0,0", "0,1", "0,2"]));
+    // The line is what the board draws, so it has to survive the lock: a
+    // finished board that refused the highlight would be hiding the one thing
+    // worth looking at.
+    expect(result.current.isLocked).toBe(true);
+
+    await act(async () => {
+      await result.current.resetGame();
+    });
+
+    // An empty board with three cells ringed as a win is the failure this
+    // guards: the highlight outliving the position that earned it.
+    expect(result.current.session?.status).toBe("active");
+    expect(result.current.winningSquares).toEqual(new Set());
+  });
+
+  it("leaves the winning squares empty for a game with no line to draw", async () => {
+    // Reversi is won by a count of discs. A result is still a result, and the
+    // board still has to be handed something — an empty set, never a guess.
+    const { result } = renderHook(() =>
+      useGameSession(
+        localSession({
+          gameKind: "reversi" as const,
+          boardSnapshot: getSessionEngine("reversi").createInitialBoard(),
+        })
+      )
+    );
+
+    const legal = getSessionEngine("reversi").getLegalSquares(
+      result.current.session!.boardSnapshot,
+      "black"
+    );
+    await act(async () => {
+      await result.current.makeMove(legal[0] as Coordinates);
+    });
+
+    expect(result.current.session?.status).toBe("active");
+    expect(result.current.winningSquares).toEqual(new Set());
   });
 
   it("refuses every move while the session is in conflict", async () => {

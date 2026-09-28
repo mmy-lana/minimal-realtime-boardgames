@@ -102,6 +102,7 @@ export function GomokuBoardView({
   selectableSquares,
   destinations,
   lastMove,
+  winningSquares,
   disabled,
   onSquareActivate,
   label,
@@ -176,6 +177,7 @@ export function GomokuBoardView({
           const role = roles.get(key) ?? "plain";
           const target = role === "target";
           const latest = isLastMove(lastMove, coord);
+          const isWinning = winningSquares?.has(key) ?? false;
           const isHoshi = HOSHI.has(key);
           // The ghost previews the single intersection the pointer is on, and
           // only while the pointer is genuinely there. A ghost on every legal
@@ -185,7 +187,13 @@ export function GomokuBoardView({
           return (
             <BoardTile
               key={key}
-              label={`${formatGridSquare(x, y, GOMOKU_SIZE)}${cell ? `, ${cell} stone` : ", empty"}`}
+              label={`${formatGridSquare(x, y, GOMOKU_SIZE)}${cell ? `, ${cell} stone` : ", empty"}${
+                // Said aloud as well as ringed: a green ring is the one fact on
+                // this board that colour alone conveys, and the other two
+                // winning-line views say it in the label for exactly that
+                // reason.
+                isWinning ? ", part of the winning line" : ""
+              }`}
               size={size}
               shape="circle"
               disabled={disabled}
@@ -193,6 +201,9 @@ export function GomokuBoardView({
               // square is legal, and a per-square marker is the clutter this
               // view exists to avoid.
               isLastMove={latest}
+              // A finished board is locked and cannot be played, but the five
+              // stones that decided it are the whole point of looking at it.
+              isWinning={isWinning}
               onClick={(event) => {
                 const aimed = coordFromEvent(event);
                 onSquareActivate(aimed ?? coord);

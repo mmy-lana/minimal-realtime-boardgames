@@ -70,6 +70,13 @@ export interface HexMoveResult {
   winner: PlayerColor | null;
   /** Always `false`. See the module note on the Hex theorem. */
   isDraw: boolean;
+  /**
+   * The chain that crossed the board, from the starting edge to the goal edge,
+   * or `null` while nobody has won. The search that decides the game reports
+   * its own path rather than leaving a view to re-derive one over a geometry
+   * that is only correct here.
+   */
+  winningLine: Coordinates[] | null;
 }
 
 /** The empty starting position: 49 cells, no stones, no side to move recorded. */
@@ -146,53 +153,82 @@ function edgesForPlayer(
 }
 
 /**
- * `true` when `player` holds an unbroken chain between their two sides.
- *
- * A breadth-first search from every cell on the player's starting edge, through
- * same-coloured stones only, and each neighbour taken from
+ * The chain `player` holds between their two sides, or `null` when there is
+ * none. A breadth-first search from every cell on the player's starting edge,
+ * through same-coloured stones only, and each neighbour taken from
  * {@link HEX_DIRECTIONS}. Union-find would be asymptotically the same here and
  * would need the same six offsets; a visited-queue flood reads as the rule it
  * implements, which is the property that matters for a file a future maintainer
  * has to trust.
+ *
+ * The search remembers which cell it reached each one *from*, so the winning
+ * chain can be handed back as a path. A boolean cannot: the view has to draw
+ * the chain that decided the game, and re-deriving it there would mean a second
+ * flood fill — over a geometry that is only correct once, in this file.
  */
-export function checkHexWin(board: HexBoard, player: PlayerColor): boolean {
+export function findHexWinningPath(
+  board: HexBoard,
+  player: PlayerColor
+): Coordinates[] | null {
   const { onStartEdge, onGoalEdge } = edgesForPlayer(player);
   const queue: Coordinates[] = [];
+  // Keyed by coordinate, valued by the cell the search arrived from. A start-edge
+  // cell has no parent — it is a root, not a cell something reached.
+  const parent: Map<string, Coordinates | null> = new Map();
 
   for (let y = 0; y < HEX_SIZE; y += 1) {
     for (let x = 0; x < HEX_SIZE; x += 1) {
       if (getBoardCell(board, x, y) !== player) continue;
       if (!onStartEdge(x, y)) continue;
       queue.push({ x, y });
+      parent.set(`${x},${y}`, null);
     }
   }
 
-  if (queue.length === 0) return false;
-
-  const seen: boolean[][] = Array.from({ length: HEX_SIZE }, () =>
-    Array<boolean>(HEX_SIZE).fill(false)
-  );
-  for (const start of queue) seen[start.y][start.x] = true;
+  if (queue.length === 0) return null;
 
   while (queue.length > 0) {
     const current = queue.shift() as Coordinates;
 
     // Tested on dequeue against the *far* edge, so a chain that only ever
     // wanders back along the start edge never satisfies it.
-    if (onGoalEdge(current.x, current.y)) return true;
+    if (onGoalEdge(current.x, current.y)) {
+      // Unwound from the far edge, so the path comes out goal-first; reversed,
+      // because the direction a player reads a chain in is the direction they
+      // would have crossed it: start edge to goal edge.
+      const path: Coordinates[] = [];
+      let cell: Coordinates | null = current;
+      while (cell !== null) {
+        path.push(cell);
+        cell = parent.get(`${cell.x},${cell.y}`) ?? null;
+      }
+      return path.reverse();
+    }
 
     for (const [dy, dx] of HEX_DIRECTIONS) {
       const nx = current.x + dx;
       const ny = current.y + dy;
       if (!isOnBoard(nx, ny)) continue;
-      if (seen[ny][nx]) continue;
+      if (parent.has(`${nx},${ny}`)) continue;
       if (getBoardCell(board, nx, ny) !== player) continue;
-      seen[ny][nx] = true;
+      parent.set(`${nx},${ny}`, current);
       queue.push({ x: nx, y: ny });
     }
   }
 
-  return false;
+  return null;
+}
+
+/**
+ * `true` when `player` holds an unbroken chain between their two sides.
+ *
+ * A thin question about the same flood {@link findHexWinningPath} performs, and
+ * deliberately not a second implementation of it: two searches over this
+ * geometry could disagree, and the one that gets to decide a game is the one
+ * nobody reads.
+ */
+export function checkHexWin(board: HexBoard, player: PlayerColor): boolean {
+  return findHexWinningPath(board, player) !== null;
 }
 
 /** Every empty cell, in row-major order. A Hex move has no origin square. */
@@ -232,9 +268,10 @@ export function applyHexMove(
   }
 
   const nextBoard = withCell(board, coord, player);
-  const winner = checkHexWin(nextBoard, player) ? player : null;
+  const winningPath = findHexWinningPath(nextBoard, player);
+  const winner = winningPath ? player : null;
 
-  return { nextBoard, winner, isDraw: false };
+  return { nextBoard, winner, isDraw: false, winningLine: winningPath };
 }
 
 /** How many stones each side has on the board. Used by the score cards. */

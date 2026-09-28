@@ -17,6 +17,13 @@ export interface Connect4MoveResult {
   placedRow: number;
   winner: PlayerColor | null;
   isDraw: boolean;
+  /**
+   * The discs that connected, ordered along the axis they run in, or `null`
+   * while nobody has won. A run of five or six still ends a game here, and it
+   * reports all of its discs rather than the four that first satisfied the
+   * rule.
+   */
+  winningLine: Coordinates[] | null;
 }
 
 export function createInitialConnect4Board(): Connect4Board {
@@ -70,7 +77,13 @@ export function applyConnect4Move(
   ];
 
   for (const [dr, dc] of directions) {
-    let count = 1;
+    // The run is *collected*, not just counted. The board is already being
+    // walked in both directions, so the cells that decide the game are the ones
+    // it passes over: counting first and re-walking afterwards to find them
+    // would be two scans of the same cells, and the second one is where a
+    // highlight ends up one cell short of the win.
+    const back: Coordinates[] = [];
+    const forward: Coordinates[] = [];
 
     for (let s = 1; s < CONNECT4_WIN_LENGTH; s += 1) {
       const nr = targetRow + dr * s;
@@ -82,7 +95,7 @@ export function applyConnect4Move(
         nc < CONNECT4_COLS &&
         nextBoard[nr][nc] === player
       ) {
-        count += 1;
+        forward.push({ x: nc, y: nr });
       } else {
         break;
       }
@@ -98,18 +111,35 @@ export function applyConnect4Move(
         nc < CONNECT4_COLS &&
         nextBoard[nr][nc] === player
       ) {
-        count += 1;
+        back.push({ x: nc, y: nr });
       } else {
         break;
       }
     }
 
-    if (count >= CONNECT4_WIN_LENGTH) {
-      return { nextBoard, placedRow: targetRow, winner: player, isDraw: false };
+    // 1 + the run either side. Both scans are capped at three cells, which is
+    // the longest that can exist in either direction on this board, so a win
+    // reported here is never a truncated one.
+    if (1 + back.length + forward.length >= CONNECT4_WIN_LENGTH) {
+      // Along the axis, not in the order the walk found them: a "line" a view
+      // wants to draw through has to be a sequence of adjacent cells, and
+      // `[move, forward…, back…]` is not one.
+      //
+      // Trimmed to exactly four, centred on the disc just played. Play can never
+      // produce a longer run — the game stopped when the fourth connected — but a
+      // replayed board could, and a view that rings five discs for a four-in-a-row
+      // is reporting a fact the rules do not have. Centring on the played disc
+      // keeps the stone the player is looking at inside the highlight.
+      const along: Coordinates[] = [...back.reverse(), { x: col, y: targetRow }, ...forward];
+      const played = back.length;
+      const lead = Math.floor((CONNECT4_WIN_LENGTH - 1) / 2);
+      const start = Math.min(Math.max(played - lead, 0), along.length - CONNECT4_WIN_LENGTH);
+      const winningLine = along.slice(start, start + CONNECT4_WIN_LENGTH);
+      return { nextBoard, placedRow: targetRow, winner: player, isDraw: false, winningLine };
     }
   }
 
   // Row 0 is the top of the board; once it is full, no disc can enter.
   const isDraw = nextBoard[0].every((cell) => cell !== null);
-  return { nextBoard, placedRow: targetRow, winner: null, isDraw };
+  return { nextBoard, placedRow: targetRow, winner: null, isDraw, winningLine: null };
 }

@@ -231,6 +231,7 @@ export function HexBoardView({
   selectableSquares,
   destinations,
   lastMove,
+  winningSquares,
   disabled,
   onSquareActivate,
   label,
@@ -311,6 +312,7 @@ export function HexBoardView({
                 const key = coordKey(coord);
                 const role = roles.get(key) ?? "plain";
                 const cell = state[y]?.[x] ?? null;
+                const isWinning = winningSquares?.has(key) ?? false;
 
                 // A corner cell sits on a Black edge *and* a White one, so the
                 // label names both rather than letting one `||` silently drop
@@ -329,6 +331,7 @@ export function HexBoardView({
                         : cell === "black"
                           ? "black stone, connects top to bottom"
                           : "white stone, connects left to right",
+                      ...(isWinning ? ["part of the winning chain"] : []),
                       ...goalEdges,
                     ].join(", ")}
                     size={size}
@@ -350,6 +353,12 @@ export function HexBoardView({
                     // reason — and it is why no tile here draws two marks.
                     isLegalTarget={false}
                     isLastMove={isLastMove(lastMove, coord)}
+                    // The chain of stones that joined two opposite edges, ringed
+                    // and washed the same way every other board rings its win.
+                    // Hex's own stone colour is the only thing that changes when
+                    // it is a player's turn, so the chain needs an extra signal to
+                    // be readable at a glance on a board this busy.
+                    isWinning={isWinning}
                     onClick={() => onSquareActivate(coord)}
                     className={cn(
                       // `group` so the ghost stone can key off the tile's own

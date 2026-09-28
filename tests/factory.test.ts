@@ -425,9 +425,27 @@ describe("replayMoves", () => {
       to: coord,
       timestamp: index + 1,
     }));
-    const { winner, isDraw } = replayMoves(engine.createInitialBoard(), moves);
+    const { winner, isDraw, winningLine } = replayMoves(engine.createInitialBoard(), moves);
     expect(winner).toBe("black");
     expect(isDraw).toBe(false);
+    // A client that adopts a room it did not play in has this and nothing else
+    // to go on: the log is the move list, and the board it is given is already
+    // the finished one. Without the line out of the replay, the board it adopts
+    // cannot show what decided the game.
+    // Black took the first square of each of the first three rows, so the
+    // winning line is the left column, top to bottom.
+    expect(winningLine).toEqual([
+      { x: 0, y: 0 },
+      { x: 0, y: 1 },
+      { x: 0, y: 2 },
+    ]);
+
+    // And the same replay, one ply short, reports no line at all: a line
+    // reported for a game in progress would be a line on a board where nobody
+    // has won yet.
+    const running = replayMoves(engine.createInitialBoard(), moves.slice(0, 4));
+    expect(running.winner).toBeNull();
+    expect(running.winningLine).toBeNull();
   });
 });
 

@@ -77,6 +77,7 @@ export function ConnectFourBoardView({
   legalSquares,
   destinations,
   lastMove,
+  winningSquares,
   disabled,
   onSquareActivate,
   label,
@@ -148,6 +149,7 @@ export function ConnectFourBoardView({
                 // drew up to six ghosts at once.
                 const isPreview = playable && hoveredColumn === x && landingRow === y;
                 const latest = isLastMove(lastMove, coord);
+                const isWinning = winningSquares?.has(coordKey(coord)) ?? false;
 
                 return (
                   <div
@@ -165,10 +167,27 @@ export function ConnectFourBoardView({
                         "shadow-[inset_0_2px_5px_rgba(0,0,0,0.75)]",
                         // The last move is marked on the socket, because the
                         // socket is the one part of a cell with room to glow.
-                        latest && "ring-2 ring-amber-400"
+                        //
+                        // One ring, chosen here for the same reason BoardTile
+                        // chooses its own: a second `ring-*` utility on one
+                        // element is settled by stylesheet order rather than by
+                        // intent. The winning four take precedence, because the
+                        // last disc dropped is almost always one of them.
+                        isWinning ? "ring-4 ring-win" : latest && "ring-2 ring-amber-400"
                       )}
                       style={{ aspectRatio: "1 / 1" }}
                     >
+                      {isWinning ? (
+                        // Under the disc, not behind it: an opaque disc would
+                        // hide a wash on the cell behind it, and the ring alone
+                        // on a dark socket is easy to miss. Absolute, so it
+                        // claims no layout space and the disc cannot shift.
+                        <span
+                          aria-hidden="true"
+                          data-winning-cell=""
+                          className="pointer-events-none absolute inset-0 rounded-full bg-win-wash"
+                        />
+                      ) : null}
                       {cell !== null ? (
                         <Disc color={cell} />
                       ) : isPreview ? (

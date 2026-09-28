@@ -131,6 +131,13 @@ export interface UseGameSessionResult {
    * empty rather than absent so no view has to ask which kind it is looking at.
    */
   readonly vanishingSquares: ReadonlySet<string>;
+  /**
+   * The cells that ended the game, as coordinate keys. Empty while the match is
+   * live, on a draw, and in the two games with no line to point at — the field
+   * is empty rather than absent so no view has to ask which kind it is looking
+   * at.
+   */
+  readonly winningSquares: ReadonlySet<string>;
   /** The last accepted move, highlighted on the board. */
   readonly lastMove: MoveRecord | null;
   readonly isThinking: boolean;
@@ -276,6 +283,16 @@ export function useGameSession(
   }, [session, isLocked, engine, board, activeSeat]);
 
   const lastMove = session?.history.length ? (session.history[session.history.length - 1] ?? null) : null;
+
+  // The line that ended the game, as the board views want it: a set of
+  // coordinate keys, derived once per session rather than per render. A game in
+  // progress has no line, and neither has a game whose result is a disc count,
+  // so this is empty far more often than it is not.
+  const winningSquares = useMemo<ReadonlySet<string>>(() => {
+    const line = session?.winningLine;
+    if (!line || line.length === 0) return new Set();
+    return new Set(line.map((coord) => coordKey(coord)));
+  }, [session?.winningLine]);
 
   const cue = useCallback(
     (name: SoundCue) => {
@@ -463,6 +480,12 @@ export function useGameSession(
         boardSnapshot: outcome.board,
         history: [...active.history, record],
         winner: resolvedWinner,
+        // Recorded from the move that ended the game, not recomputed from the
+        // snapshot afterwards. `undefined` and `null` both mean "no line to
+        // show" — the first for the games that have none, the second for a
+        // game still in progress — and a session that has just been reset has to
+        // forget the line it had.
+        winningLine: outcome.winningLine ?? null,
         updatedAt: now,
         version: active.version + 1,
         // A move is only as synced as the write that carries it.
@@ -550,6 +573,10 @@ export function useGameSession(
       ...active,
       status: matchStatusFromResult(winner, false),
       winner,
+      // A resignation is decided by a player, not by a row of stones: there is
+      // no line, and claiming one would put a highlight on a board nobody won
+      // by playing.
+      winningLine: null,
       updatedAt: now,
       version: active.version + 1,
       syncState: active.mode === "online_realtime" ? "pending_upload" : "synced",
@@ -594,6 +621,9 @@ export function useGameSession(
       boardSnapshot: engine.createInitialBoard(),
       history: [],
       winner: null,
+      // The previous game's line goes with its board. Left in place it would
+      // light five stones at stake on an empty opening position.
+      winningLine: null,
       updatedAt: now,
       version: active.version + 1,
       syncState: active.mode === "online_realtime" ? "pending_upload" : "synced",
@@ -641,6 +671,7 @@ export function useGameSession(
     selectableSquares,
     legalSquares,
     vanishingSquares,
+    winningSquares,
     destinations,
     lastMove,
     isThinking,

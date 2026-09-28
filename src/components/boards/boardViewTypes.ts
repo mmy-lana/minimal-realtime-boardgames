@@ -40,6 +40,17 @@ export interface BoardViewProps {
    * rule simply ignores it.
    */
   readonly vanishingSquares?: ReadonlySet<string>;
+  /**
+   * The cells that ended the game, as `"x,y"`. Optional, and empty in every
+   * state a finished game does not have: while the match is live, on a draw, and
+   * in Reversi and Checkers, where the result is a count of pieces and there is
+   * no line to point at. A view that ignores it simply draws no highlight.
+   *
+   * It is the *view's* cue, not its own search: the engines already decided
+   * which cells won, and a view that worked the answer out again would be a
+   * second opinion that could disagree with the result banner.
+   */
+  readonly winningSquares?: ReadonlySet<string>;
   /** Blocks every interaction, e.g. while the turn is not the local player's. */
   readonly disabled: boolean;
   /** Called with the square the user activated. */
