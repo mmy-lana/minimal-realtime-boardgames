@@ -441,3 +441,144 @@ describe("NetworkIndicator", () => {
     expect(markup).not.toContain("Live");
   });
 });
+
+const { GameOverDialog } = await import("@/components/compound/GameOverDialog");
+type Outcome = Parameters<typeof GameOverDialog>[0]["outcome"];
+
+/** The dialog's accessible name, resolved the way a screen reader would. */
+function dialogName(): string {
+  const dialog = screen.getByRole("dialog");
+  const id = dialog.getAttribute("aria-labelledby")!;
+  return document.getElementById(id)?.textContent ?? "";
+}
+
+function renderResult(outcome: Outcome, mode: "offline_local" | "online_realtime", localSeat: "black" | "white" = "black") {
+  return render(
+    <GameOverDialog
+      outcome={outcome}
+      gameKind="tictactoe"
+      mode={mode}
+      localSeat={localSeat}
+      onPlayAgain={() => {}}
+      onBackToLobby={() => {}}
+    />
+  );
+}
+
+describe("GameOverDialog", () => {
+  it("names the winning seat in a local match, not the reader", () => {
+    // "You win" is true of both seats at a hot-seat table, so it identifies
+    // nobody: the reader has to work out from the last move whether the words
+    // were about them. The seat is named instead.
+    for (const [winner, expected] of [
+      ["black", "Player 1 (Black) Wins!"],
+      ["white", "Player 2 (White) Wins!"],
+    ] as const) {
+      const { unmount } = renderResult({ kind: "win", winner }, "offline_local");
+      expect(dialogName()).toBe(expected);
+      expect(screen.getByText(`${winner === "black" ? "Player 1 (Black)" : "Player 2 (White)"} has won the game.`))
+        .toBeTruthy();
+      unmount();
+    }
+  });
+
+  it("gives a local draw a headline and a body that both say so", () => {
+    renderResult({ kind: "draw" }, "offline_local");
+    expect(dialogName()).toBe("Match Drawn!");
+    expect(screen.getByText("Neither player can claim victory.")).toBeTruthy();
+  });
+
+  it("names the seat and the colour in an online match", () => {
+    const { unmount } = renderResult({ kind: "win", winner: "black" }, "online_realtime", "black");
+    expect(dialogName()).toBe("Victory! You won as Black (Player 1)");
+    unmount();
+
+    renderResult({ kind: "win", winner: "white" }, "online_realtime", "black");
+    expect(dialogName()).toBe("Defeat. Opponent won as White (Player 2)");
+    cleanup();
+
+    renderResult({ kind: "draw" }, "online_realtime");
+    expect(dialogName()).toBe("Draw. The match ended in a tie.");
+  });
+
+  it("numbers Black as Player 1 in both modes", () => {
+    // A result dialog that numbered players differently from the score cards
+    // would introduce a second numbering at the exact moment a player is
+    // trying to remember which one they were.
+    const seen: string[] = [];
+    for (const mode of ["offline_local", "online_realtime"] as const) {
+      for (const winner of ["black", "white"] as const) {
+        const { unmount } = renderResult({ kind: "win", winner }, mode, winner);
+        seen.push(screen.getByRole("dialog").getAttribute("aria-labelledby")!.replace("-title", ""));
+        expect(document.getElementById(seen[seen.length - 1]!)!.textContent).toContain(
+          winner === "black" ? "Player 1" : "Player 2"
+        );
+        unmount();
+      }
+    }
+    expect(seen).toHaveLength(4);
+  });
+
+  it("puts a disc in the winner's colour in the modal header", () => {
+    const { unmount } = renderResult({ kind: "win", winner: "white" }, "online_realtime", "black");
+    const badge = document.querySelector('[data-winner-badge="white"]') as HTMLElement;
+    expect(badge).not.toBeNull();
+    // The header strip, not the body: the result should be legible before the
+    // body is read. The header is the ancestor that holds the <h2>.
+    let node: HTMLElement | null = badge;
+    while (node && !node.querySelector("h2")) node = node.parentElement;
+    expect(node?.querySelector("h2")).not.toBeNull();
+    expect(badge.closest("p")).toBeNull();
+    // White is the pearl disc, black the jet one — the same treatment the
+    // board uses, so a result screen and a mid-game board read alike.
+    expect(badge.querySelector(".bg-white")).not.toBeNull();
+    unmount();
+
+    renderResult({ kind: "win", winner: "black" }, "online_realtime", "black");
+    const black = document.querySelector('[data-winner-badge="black"]') as HTMLElement;
+    expect(black.querySelector('[class*="radial-gradient"]')).not.toBeNull();
+    expect(black.querySelector(".bg-white")).toBeNull();
+  });
+
+  it("keeps the badge out of the dialog's accessible name", () => {
+    // The badge repeats what the title already says. Folding it into the
+    // labelled element would announce "Black · Player 1 Black · Player 1" on
+    // every result screen.
+    renderResult({ kind: "win", winner: "black" }, "offline_local");
+    const dialog = screen.getByRole("dialog");
+    const title = document.getElementById(dialog.getAttribute("aria-labelledby")!);
+    expect(title?.textContent).toBe("Player 1 (Black) Wins!");
+    expect(dialog.getAttribute("aria-labelledby")).toBe(title?.id);
+  });
+
+  it("shows no winner badge on a draw or an abandoned match", () => {
+    // A neutral grey disc would read as a result nobody won. Better to show
+    // nothing than to imply a third outcome.
+    for (const outcome of [{ kind: "draw" }, { kind: "abandoned" }] as Outcome[]) {
+      const { unmount } = renderResult(outcome, "offline_local");
+      expect(document.querySelector("[data-winner-badge]")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("still offers reconciliation instead of a rematch when the copies disagree", () => {
+    // A conflict is neither a win nor a loss, and replaying from a board
+    // nobody can verify is the one thing this dialog must never offer.
+    render(
+      <GameOverDialog
+        outcome={{ kind: "conflict", detail: "divergent" }}
+        gameKind="chess"
+        mode="online_realtime"
+        localSeat="black"
+        onRevalidate={() => {}}
+        onPlayAgain={() => {}}
+        onBackToLobby={() => {}}
+        conflictDetail="Move 14 differs between the two copies."
+      />
+    );
+    expect(screen.getByRole("button", { name: /re-check against server/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /play again/i })).toBeNull();
+    expect(screen.getByText("Move 14 differs between the two copies.")).toBeTruthy();
+    expect(document.querySelector("[data-winner-badge]")).toBeNull();
+  });
+});

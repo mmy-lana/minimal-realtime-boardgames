@@ -404,6 +404,7 @@ export function GameShell({
       <GameOverDialog
         outcome={outcome}
         gameKind={gameKind}
+        mode={mode}
         localSeat={localSeat}
         onRevalidate={onRevalidate}
         isRevalidating={isRevalidating}

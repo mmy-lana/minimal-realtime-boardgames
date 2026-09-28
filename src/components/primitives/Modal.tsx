@@ -31,6 +31,15 @@ export interface ModalProps {
   children?: React.ReactNode;
   /** Rendered in a sticky footer strip below `children`. */
   footer?: React.ReactNode;
+  /**
+   * Rendered to the right of the title, before the close button.
+   *
+   * Deliberately outside the `<h2 id={titleId}>`: it is decoration that
+   * repeats what the title already says, and folding it into the labelled
+   * element would make a screen reader announce "Black Player 1 Black" for
+   * every result dialog.
+   */
+  headerAccessory?: React.ReactNode;
   /** `data-modal-panel` hook for the test suite. */
   id?: string;
 }
@@ -83,6 +92,7 @@ export function Modal({
   panelClassName,
   children,
   footer,
+  headerAccessory,
   id,
 }: ModalProps) {
   const reactId = React.useId();
@@ -219,6 +229,7 @@ export function Modal({
           >
             {title}
           </h2>
+          {headerAccessory ? <div className="flex shrink-0 items-center">{headerAccessory}</div> : null}
           {canDismiss && !hideCloseButton ? (
             <button
               type="button"
