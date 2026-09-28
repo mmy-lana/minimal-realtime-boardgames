@@ -480,6 +480,73 @@ describe("board sizing", () => {
     unmount();
   });
 
+  it("gives Connect Four an exact 7:6 playfield with square cells", async () => {
+    const { ConnectFourBoardView } = await import("@/components/boards/ConnectFourBoardView");
+    const { container, unmount } = render(
+      <ConnectFourBoardView
+        board={getSessionEngine("connect4").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Connect Four board"
+      />
+    );
+
+    // 7 columns by 6 rows, as a ratio rather than as a class that happens to
+    // look right. The board was previously 7:6 by intention and not by
+    // measurement, because the padding and border that were stealing height
+    // from it were on the same element as the ratio.
+    const playfield = container.querySelector("[data-c4-playfield]") as HTMLElement;
+    expect(playfield.style.aspectRatio).toBe("7 / 6");
+    expect(playfield.style.gridTemplateColumns).toBe("repeat(7, minmax(0, 1fr))");
+    // 42 sockets, and no gap: a gap would make the cells non-square and the
+    // disc inside them oval. Separation comes from per-cell padding.
+    expect(container.querySelectorAll(".bg-slate-950")).toHaveLength(42);
+    expect(playfield.className).not.toContain("gap-");
+    // The invariant that was violated: the box carrying the ratio must carry no
+    // chrome of its own. Padding here would shrink the content box off 7:6 and
+    // the cells would no longer be square, whatever the ratio says.
+    expect(playfield.className).not.toMatch(/(^| )(p|px|py|m|border|shadow)-/);
+    unmount();
+  });
+
+  it("previews a Connect Four drop in the slot the disc falls into", async () => {
+    const { ConnectFourBoardView } = await import("@/components/boards/ConnectFourBoardView");
+    const { container, unmount } = render(
+      <ConnectFourBoardView
+        board={getSessionEngine("connect4").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>(["0,5", "3,5"])}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Connect Four board"
+      />
+    );
+
+    // Nothing is previewed until a column is actually pointed at.
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
+
+    // Hovering column 3 puts a ghost in that column's landing slot, which on
+    // an empty board is the bottom row — the row the disc will really occupy.
+    const column = screen.getByRole("button", { name: /Column 4,/ });
+    fireEvent.mouseEnter(column);
+    const ghosts = container.querySelectorAll(".animate-pulse");
+    expect(ghosts).toHaveLength(1);
+    // Translucent, so it reads as "not placed yet" rather than as a disc.
+    expect(ghosts[0].className).toMatch(/bg-white\/20/);
+
+    fireEvent.mouseLeave(column);
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
+    unmount();
+  });
+
   it("snaps a Gomoku click to the intersection nearest the finger", async () => {
     // Stones sit on crossings, not in cells, so the coordinate the view reports
     // has to be the nearest *intersection* to the pointer. Aiming at a line
