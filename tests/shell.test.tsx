@@ -395,6 +395,91 @@ describe("board sizing", () => {
     }
   });
 
+  it("marks at most the hovered Gomoku square, never all 225 legal ones", async () => {
+    // The bug this guards: every empty intersection on a 15x15 Gomoku board is
+    // a legal move, so a per-square "legal target" marker put ~225 green rings
+    // on the board at once and buried the grid lines. A count is the only
+    // assertion that catches it — any existence check passes just as happily
+    // with 225 markers as with one.
+    const { GomokuBoardView } = await import("@/components/boards/GomokuBoardView");
+    const gomoku = getSessionEngine("gomoku");
+    const board = gomoku.createInitialBoard();
+    // Every empty intersection is legal; assert the view still decorates almost
+    // none of them.
+    const legal = new Set<string>();
+    for (let y = 0; y < 15; y += 1) {
+      for (let x = 0; x < 15; x += 1) legal.add(`${x},${y}`);
+    }
+    const { container, unmount } = render(
+      <GomokuBoardView
+        board={board}
+        selected={new Set<string>()}
+        legalSquares={legal}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Gomoku board"
+        size="sm"
+      />
+    );
+
+    // `data-square="legal"` is what BoardTile sets for a target, and the ring
+    // it paints is the thing that used to blanket the board.
+    const marked = container.querySelectorAll('[data-square="legal"]');
+    expect(marked).toHaveLength(0);
+    expect(container.querySelectorAll(".border-emerald-600")).toHaveLength(0);
+    unmount();
+  });
+
+  it("draws the five traditional Gomoku star points", async () => {
+    const { GomokuBoardView } = await import("@/components/boards/GomokuBoardView");
+    const { container, unmount } = render(
+      <GomokuBoardView
+        board={getSessionEngine("gomoku").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Gomoku board"
+        size="sm"
+      />
+    );
+
+    // Hoshi are the five points a go board has carried since the 1600s, and
+    // they are how you find the centre and the quarters by eye.
+    const hoshi = container.querySelectorAll(".bg-\\[\\#4A3718\\]");
+    expect(hoshi).toHaveLength(5);
+    unmount();
+  });
+
+  it("sizes a Gomoku stone to most of its intersection, not a fixed dot", async () => {
+    const { GomokuBoardView } = await import("@/components/boards/GomokuBoardView");
+    const { container, unmount } = render(
+      <GomokuBoardView
+        board={getSessionEngine("gomoku").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Gomoku board"
+        size="sm"
+      />
+    );
+    // 84% of the intersection: `p-[8%]` on the tile leaves 16% of clearance for
+    // the grid line to stay visible, and scales with the board.
+    const tiles = container.querySelectorAll("[data-board-surface]");
+    for (const tile of tiles) expect(tile.className).toContain("p-[8%]");
+    unmount();
+  });
+
   it("snaps a Gomoku click to the intersection nearest the finger", async () => {
     // Stones sit on crossings, not in cells, so the coordinate the view reports
     // has to be the nearest *intersection* to the pointer. Aiming at a line

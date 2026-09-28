@@ -9,6 +9,18 @@
  * rather than graph paper. Each cell is also a control, so the hit area is the
  * whole cell and never the 22px square the stone itself occupies.
  *
+ * **No per-cell markers.** Every empty intersection on a 15x15 Gomoku board is
+ * a legal move, so the board carries ~225 of them. Rendering a marker per legal
+ * square put ~225 green rings on screen, which buried the grid lines and left
+ * the board looking like a spreadsheet rather than a go board. The rule here is
+ * that a square is only ever decorated for a *specific* square the player is
+ * acting on:
+ *
+ *  - the one intersection currently under the pointer gets a ghost stone;
+ *  - the one stone just played gets a small contrasting pip.
+ *
+ * Two markers per board, both traditional, and every other square is left alone.
+ *
  * Hit-testing maps a pointer to the nearest intersection before it is reported.
  * Aiming at a line crossing and getting that crossing is what makes a 15x15
  * board usable with a fingertip, and rounding to the nearest centre — rather
@@ -23,20 +35,63 @@ import { GOMOKU_SIZE } from "@/engine/rules/gomoku";
 import { cn, formatGridSquare } from "@/lib/utils";
 import { BoardTile } from "@/components/primitives/BoardTile";
 import type { BoardViewProps } from "./boardViewTypes";
-import { coordKey, isLastMove, lastMoveWash, SquareRole, squareRole } from "./boardViewTypes";
+import { coordKey, isLastMove, SquareRole, squareRole } from "./boardViewTypes";
 
-function Stone({ color }: { color: "black" | "white" }): React.ReactElement {
+/** The board's wood, and the ink its grid is drawn in. */
+const WOOD = "bg-[#DCB35C]";
+const LINE = "#4A3718";
+
+/**
+ * Hoshi — the traditional star points. They sit on the same five intersections
+ * on every board size, so they are derived from the centre rather than written
+ * as literals.
+ */
+const HOSHI: ReadonlySet<string> = new Set([
+  coordKey({ x: 3, y: 3 }),
+  coordKey({ x: 11, y: 3 }),
+  coordKey({ x: 7, y: 7 }),
+  coordKey({ x: 3, y: 11 }),
+  coordKey({ x: 11, y: 11 }),
+]);
+
+/**
+ * A stone is 84% of the intersection spacing.
+ *
+ * Sizing it as a percentage of the cell rather than as a fixed pixel is what
+ * keeps the board looking like a go board at 360px and at 620px. The 16% of
+ * clearance is what lets the grid line under the stone stay visible.
+ */
+const STONE_INSET = "p-[8%]";
+
+function Stone({ color, marked }: { color: "black" | "white"; marked: boolean }): React.ReactElement {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "block w-full rounded-full border shadow-md",
-        color === "black"
-          ? "border-neutral-900 bg-neutral-950"
-          : "border-neutral-400 bg-neutral-50"
-      )}
-      style={{ aspectRatio: "1 / 1" }}
-    />
+    <span className="relative block w-full" style={{ aspectRatio: "1 / 1" }}>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 rounded-full",
+          color === "black"
+            ? // Jet black with a single specular highlight in the upper left, so
+              // the stone reads as a solid sphere rather than a flat circle.
+              "bg-[radial-gradient(circle_at_32%_26%,#52525b_0%,#18181b_42%,#000000_100%)] shadow-[0_2px_5px_rgba(0,0,0,0.6)]"
+            : // Pearl white: a bright face, a light rim to separate it from the
+              // wood, and a soft shadow to seat it on the line.
+              "bg-white border border-neutral-300 shadow-[0_2px_5px_rgba(0,0,0,0.35)]"
+        )}
+      />
+      {/* The last move is marked the way it is on a real board: a small pip in
+          the opposite colour, so it is legible on a black stone and a white one
+          alike without drawing a ring around either. */}
+      {marked ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "absolute left-1/2 top-1/2 block size-[24%] -translate-x-1/2 -translate-y-1/2 rounded-full",
+            color === "black" ? "bg-neutral-300" : "bg-neutral-900"
+          )}
+        />
+      ) : null}
+    </span>
   );
 }
 
@@ -100,14 +155,16 @@ export function GomokuBoardView({
       aria-rowcount={GOMOKU_SIZE}
       aria-colcount={GOMOKU_SIZE}
       aria-disabled={disabled || undefined}
-      className="grid w-full gap-0 rounded-md border-2 border-neutral-800 bg-[#e3b866] p-1 shadow-md"
+      className={cn(
+        "grid w-full gap-0 overflow-hidden rounded-md border-2 border-[#4A3718] p-0 shadow-md",
+        WOOD
+      )}
       style={{
         gridTemplateColumns: `repeat(${GOMOKU_SIZE}, minmax(0, 1fr))`,
         // Two 1px lines per axis, tiled every cell and offset by half a cell so
         // each line lands on an intersection rather than on a cell boundary.
         // The outer half-cell on the right and bottom is closed by the frame.
-        backgroundImage:
-          "linear-gradient(to right, var(--color-neutral-800) 1px, transparent 1px), linear-gradient(to bottom, var(--color-neutral-800) 1px, transparent 1px)",
+        backgroundImage: `linear-gradient(to right, ${LINE} 1px, transparent 1px), linear-gradient(to bottom, ${LINE} 1px, transparent 1px)`,
         backgroundSize: `${100 / GOMOKU_SIZE}% ${100 / GOMOKU_SIZE}%`,
         backgroundPosition: `${100 / (GOMOKU_SIZE * 2)}% ${100 / (GOMOKU_SIZE * 2)}%`,
       }}
@@ -119,8 +176,10 @@ export function GomokuBoardView({
           const role = roles.get(key) ?? "plain";
           const target = role === "target";
           const latest = isLastMove(lastMove, coord);
-          // The ghost only previews where the pointer genuinely is, so it never
-          // implies a move the player is not making.
+          const isHoshi = HOSHI.has(key);
+          // The ghost previews the single intersection the pointer is on, and
+          // only while the pointer is genuinely there. A ghost on every legal
+          // square would put ~225 of them on the board at once.
           const showGhost = !disabled && cell === null && target && hovered?.x === x && hovered?.y === y;
 
           return (
@@ -130,8 +189,9 @@ export function GomokuBoardView({
               size={size}
               shape="circle"
               disabled={disabled}
-              selected={role === "selected"}
-              isLegalTarget={target}
+              // Deliberately not `isLegalTarget`: on this board every empty
+              // square is legal, and a per-square marker is the clutter this
+              // view exists to avoid.
               isLastMove={latest}
               onClick={(event) => {
                 const aimed = coordFromEvent(event);
@@ -148,25 +208,25 @@ export function GomokuBoardView({
                 setHovered((current) => (current?.x === x && current.y === y ? null : current))
               }
               className={cn(
-                "border-0 bg-transparent",
-                // A stone is inset so it clears the crossing it sits on.
-                "p-[18%]",
-                "hover:bg-amber-600/20",
+                "bg-transparent",
+                STONE_INSET,
+                "hover:bg-black/5",
                 "disabled:hover:bg-transparent",
-                lastMoveWash(role),
-                selected && "bg-amber-500/25",
-                latest && "after:pointer-events-none after:absolute after:inset-[12%] after:rounded-full after:border after:border-emerald-600",
-                target &&
-                  "after:pointer-events-none after:absolute after:inset-[18%] after:rounded-full after:border-2 after:border-emerald-600"
+                selected && "bg-black/10"
               )}
             >
               {cell !== null ? (
-                <Stone color={cell} />
+                <Stone color={cell} marked={latest} />
               ) : showGhost ? (
                 <span
                   aria-hidden="true"
-                  className="block w-full animate-pulse rounded-full border-2 border-dashed border-neutral-700"
+                  className="block w-full animate-pulse rounded-full border-2 border-dashed border-[#4A3718] bg-black/10"
                   style={{ aspectRatio: "1 / 1" }}
+                />
+              ) : isHoshi ? (
+                <span
+                  aria-hidden="true"
+                  className="block size-[18%] rounded-full bg-[#4A3718]"
                 />
               ) : null}
             </BoardTile>
