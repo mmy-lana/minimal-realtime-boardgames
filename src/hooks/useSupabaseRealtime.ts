@@ -40,6 +40,8 @@ import { describeError } from "@/lib/utils";
 export interface RemoteMove {
   readonly id: string;
   readonly room_id: string;
+  /** The room reset_epoch in force when this move was played. */
+  readonly epoch: number;
   readonly ply: number;
   readonly player: "black" | "white";
   readonly from_coord: { x: number; y: number } | null;
@@ -56,6 +58,7 @@ export interface RemoteRoom {
   readonly board_snapshot: unknown;
   readonly winner: "black" | "white" | null;
   readonly version: number;
+  readonly reset_epoch: number;
   readonly player_white_token: string | null;
 }
 
@@ -124,12 +127,23 @@ function readMove(row: Record<string, unknown>): RemoteMove | null {
   return {
     id: typeof row.id === "string" ? row.id : `${String(row.id)}`,
     room_id: typeof row.room_id === "string" ? row.room_id : "",
+    epoch: readEpoch(row.epoch),
     ply,
     player,
     from_coord: toCoord(row.from_coord),
     to_coord: to,
     payload: typeof row.payload === "string" ? row.payload : null,
   };
+}
+
+/**
+ * Reads a `reset_epoch`. The column is `not null` with a default, so a well-formed
+ * deployment always supplies it; a room written before the column existed reads
+ * as epoch 0, which is exactly the epoch its moves were stamped with.
+ */
+function readEpoch(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return 0;
+  return Math.floor(value);
 }
 
 export function useSupabaseRealtime(
@@ -147,6 +161,12 @@ export function useSupabaseRealtime(
   const channelRef = useRef<RealtimeChannel | null>(null);
   /** The last board this client proved correct, and the ply it proves to. */
   const verifiedRef = useRef<{ sessionId: string; ply: number; board: UniversalBoard } | null>(null);
+  /**
+   * The room's `reset_epoch` as this client last saw it. Moves carry the epoch
+   * they were played in, and a reset starts a new log on the same room, so this
+   * is what decides which moves belong to the game currently being played.
+   */
+  const epochRef = useRef(0);
   const conflictRef = useRef<string | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -174,11 +194,33 @@ export function useSupabaseRealtime(
       if (reason !== "initial") setStatus("verifying");
       const supabase = getSupabaseClient();
       const engine = getSessionEngine(session.gameKind);
+      const roomId = optionsRef.current.roomId;
+
+      // The epoch has to be read before the moves can be filtered, because it
+      // decides which moves belong to the game in progress. Moves from earlier
+      // epochs stay in the table forever — a reset preserves the game that came
+      // before it — so filtering by room alone would replay the abandoned game
+      // on top of the new one and produce a board that matches nothing.
+      const roomResult = await supabase
+        .from("game_rooms")
+        .select("reset_epoch")
+        .eq("id", roomId)
+        .single();
+
+      if (roomResult.error) {
+        setConnection("error");
+        setStatus("error");
+        return false;
+      }
+
+      const epoch = readEpoch((roomResult.data as { reset_epoch?: unknown } | null)?.reset_epoch);
+      epochRef.current = epoch;
 
       const { data, error } = await supabase
         .from("game_moves")
-        .select("id, room_id, ply, player, from_coord, to_coord, payload")
-        .eq("room_id", optionsRef.current.roomId)
+        .select("id, room_id, epoch, ply, player, from_coord, to_coord, payload")
+        .eq("room_id", roomId)
+        .eq("epoch", epoch)
         .order("ply", { ascending: true });
 
       if (error) {
@@ -191,7 +233,10 @@ export function useSupabaseRealtime(
       const moves = rows.filter((row): row is RemoteMove => row !== null);
 
       // A ply gap means the move log itself is incomplete; replaying what is
-      // there would produce a board that looks valid and is not.
+      // there would produce a board that looks valid and is not. The gap check
+      // is per-epoch, which is why the query above is scoped to one: ply
+      // numbering restarts at 1 after a reset, and the previous game's plies
+      // are not a gap in this one.
       for (let index = 0; index < moves.length; index += 1) {
         if (moves[index]?.ply !== index + 1) {
           raiseConflict("The move history has a gap, so the board cannot be verified.");
@@ -301,6 +346,10 @@ export function useSupabaseRealtime(
     setConnection("connecting");
     verifiedRef.current = null;
     conflictRef.current = null;
+    // A different room is at a different epoch. Leaving the old room's value in
+    // place would make every insert from the new room look like it belonged to
+    // a superseded game and be dropped until the first verification lands.
+    epochRef.current = 0;
 
     const channel = supabase.channel(`room:${roomId}`, {
       config: { broadcast: { self: false }, presence: { key: roomId } },
@@ -311,6 +360,12 @@ export function useSupabaseRealtime(
       if (cancelled) return;
       const move = readMove(payload.new as Record<string, unknown>);
       if (!move) return;
+
+      // The subscription is scoped to the room, not to one epoch, so it carries
+      // every move ever played here. A move from an earlier epoch belongs to a
+      // game that has already been reset away; applying it to the current board
+      // would corrupt the very baseline the client just proved correct.
+      if (move.epoch !== epochRef.current) return;
 
       const verified = verifiedRef.current;
       const session = optionsRef.current.localSession;
@@ -354,6 +409,18 @@ export function useSupabaseRealtime(
       // match is finished, but the board is only adopted after a replay has
       // proved it, so a corrupted snapshot can never be rendered as truth.
       if (next.version < session.version) return;
+
+      // A reset advanced the epoch, so the baseline describes a game that is
+      // over. It is dropped here rather than left to the re-verification below,
+      // because ply numbering restarts at 1 in the new epoch: until the
+      // baseline is gone, the first move of the new game compares as
+      // `ply <= verified.ply` and is discarded as though already replayed.
+      if (readEpoch(next.reset_epoch) !== epochRef.current) {
+        epochRef.current = readEpoch(next.reset_epoch);
+        verifiedRef.current = null;
+        setIsVerified(false);
+      }
+
       void verifyAgainstHistory("reconnect");
     });
 

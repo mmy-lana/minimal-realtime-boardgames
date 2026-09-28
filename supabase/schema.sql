@@ -78,35 +78,68 @@ create table if not exists public.game_rooms (
   board_snapshot jsonb not null,
   winner public.player_color null,
   version integer not null default 1,
+  reset_epoch integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint game_rooms_version_positive check (version > 0),
-  constraint game_rooms_turn_number_positive check (turn_number > 0)
+  constraint game_rooms_turn_number_positive check (turn_number > 0),
+  constraint game_rooms_reset_epoch_non_negative check (reset_epoch >= 0)
 );
 
 comment on table public.game_rooms is
   'Authoritative room state. All post-insert mutations go through SECURITY DEFINER RPCs.';
 
+comment on column public.game_rooms.reset_epoch is
+  'Increments on every RESET. Moves are stamped with the epoch that was current when they were played, so a reset starts a new move log without destroying the old one.';
+
 create table if not exists public.game_moves (
   id uuid primary key default gen_random_uuid(),
   room_id uuid not null references public.game_rooms(id) on delete cascade,
+  epoch integer not null default 0,
   ply integer not null,
   player public.player_color not null,
   from_coord jsonb null,
   to_coord jsonb not null,
   payload text null,
   created_at timestamptz not null default now(),
-  constraint game_moves_ply_positive check (ply > 0)
+  constraint game_moves_ply_positive check (ply > 0),
+  constraint game_moves_epoch_non_negative check (epoch >= 0)
 );
 
--- Full-history replay on load/reconnect reads by (room_id, ply).
-create index if not exists game_moves_room_ply_idx on public.game_moves (room_id, ply);
+comment on column public.game_moves.epoch is
+  'The room reset_epoch in force when this move was played. Ply numbering restarts at 1 after a reset, so (room_id, epoch, ply) is the identity of a move; epoch alone is what separates one game from its successors.';
+
+-- A RESET must be able to start a fresh move log without deleting the previous
+-- one: the moves before it are the evidence of what happened in the game that
+-- was abandoned or resigned, and destroying them destroys the only record.
+--
+-- `create table if not exists` does not add a column to a table that already
+-- exists, so an already-deployed database needs the columns and their
+-- constraints applied explicitly. Defaults backfill existing rows to epoch 0,
+-- which is correct: every move already stored predates the first reset.
+alter table public.game_rooms add column if not exists reset_epoch integer not null default 0;
+alter table public.game_moves add column if not exists epoch integer not null default 0;
+
+do $$ begin
+  alter table public.game_rooms add constraint game_rooms_reset_epoch_non_negative check (reset_epoch >= 0);
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table public.game_moves add constraint game_moves_epoch_non_negative check (epoch >= 0);
+exception when duplicate_object then null; end $$;
+
+-- Full-history replay on load/reconnect reads by (room_id, epoch, ply). This
+-- replaces the (room_id, ply) index: a room's ply numbering restarts after a
+-- reset, so ply alone is not unique within a room and an index that ignores
+-- the epoch would merge two different games' moves.
+drop index if exists public.game_moves_room_ply_idx;
+create index if not exists game_moves_room_epoch_ply_idx on public.game_moves (room_id, epoch, ply);
 
 create index if not exists game_rooms_status_idx on public.game_rooms (status);
 create index if not exists game_rooms_kind_status_idx on public.game_rooms (game_kind, status);
 
 comment on table public.game_moves is
-  'Append-only move log. Cleared only by a RESET via submit_terminal_update so that replay verification stays sound.';
+  'Append-only move log. Rows are never deleted by a reset: submit_terminal_update advances game_rooms.reset_epoch instead, which starts a new log and leaves this one intact as the record of the game that preceded it. Rows still disappear when their room is deleted, via the on delete cascade above.';
 
 -- -----------------------------------------------------------------------------
 -- Row Level Security
@@ -242,8 +275,13 @@ begin
   end if;
 
   -- Idempotent move insertion: a retried request must not duplicate a ply.
-  insert into public.game_moves (id, room_id, ply, player, from_coord, to_coord, payload, created_at)
-  values (p_move_id, p_room_id, p_ply, p_player, p_from_coord, p_to_coord, p_payload, now())
+  -- Stamped with the room's current epoch so the move stays attributable to the
+  -- game it was played in even after a later reset starts a new log on the same
+  -- room. A move arriving after a reset is written by a client that has not yet
+  -- seen the new epoch, so it lands in the old one; the version check above
+  -- already makes that request a conflict, which is the correct outcome.
+  insert into public.game_moves (id, room_id, epoch, ply, player, from_coord, to_coord, payload, created_at)
+  values (p_move_id, p_room_id, v_room.reset_epoch, p_ply, p_player, p_from_coord, p_to_coord, p_payload, now())
   on conflict (id) do nothing;
 
   v_next_turn := case when p_player = 'black' then 'white' else 'black' end;
@@ -324,9 +362,10 @@ $$;
 -- RPC: submit_terminal_update — resign / reset without a client UPDATE policy
 -- -----------------------------------------------------------------------------
 -- Because public.game_rooms has no UPDATE policy, resign and reset must also
--- go through a SECURITY DEFINER RPC. A RESET additionally clears game_moves so
--- that a client's later full-history replay re-derives exactly the snapshot
--- stored here instead of replaying a stale move log.
+-- go through a SECURITY DEFINER RPC. A RESET starts a new epoch rather than
+-- clearing game_moves, so that a client's later full-history replay re-derives
+-- exactly the snapshot stored here instead of replaying the abandoned game's
+-- log — while that log stays on the server as its record.
 
 create or replace function public.submit_terminal_update(
   p_room_id uuid,
@@ -386,10 +425,16 @@ begin
     return 'invalid_payload_kind';
   end if;
 
-  if p_clear_history then
-    delete from public.game_moves where room_id = p_room_id;
-  end if;
-
+  -- A RESET used to delete this room's move log outright. That is the one
+  -- thing an append-only ledger must never do: the moves being deleted are the
+  -- only record of the game that was just abandoned or resigned, and the caller
+  -- who resets is not necessarily the one who played them. Advancing
+  -- reset_epoch starts a new log instead — ply numbering restarts at 1 within
+  -- the new epoch, clients read only the current epoch, and every earlier move
+  -- stays exactly where it was.
+  --
+  -- The update below and the epoch bump happen in the same statement, so the
+  -- room never exists in a state where its epoch and its moves disagree.
   update public.game_rooms
   set
     board_snapshot = p_board_snapshot,
@@ -398,6 +443,10 @@ begin
     status = p_status,
     winner = p_winner,
     version = v_room.version + 1,
+    reset_epoch = case
+      when p_clear_history then v_room.reset_epoch + 1
+      else v_room.reset_epoch
+    end,
     updated_at = now()
   where id = p_room_id;
 
