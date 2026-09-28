@@ -134,16 +134,24 @@ export async function adoptRemoteRoomState(
   supabase: SupabaseClient,
   roomId: string
 ): Promise<boolean> {
-  let remote: { version?: unknown; status?: unknown } | null = null;
+  // Named rather than written inline: the cast below needs the *declared* type,
+  // and `typeof remote` at that point is the narrowed `null`, not the shape.
+  type RemoteRoomState = {
+    version?: unknown;
+    status?: unknown;
+    current_turn?: unknown;
+    turn_number?: unknown;
+  };
+  let remote: RemoteRoomState | null = null;
 
   try {
     const result = await supabase
       .from("game_rooms")
-      .select("version, status")
+      .select("version, status, current_turn, turn_number")
       .eq("id", roomId)
       .single();
     if (result.error) return false;
-    remote = result.data as { version?: unknown; status?: unknown } | null;
+    remote = result.data as RemoteRoomState;
   } catch {
     // A transport failure here is indistinguishable from a failed read, and
     // both mean the same thing to the caller: adopt nothing, retry anyway.
@@ -155,8 +163,26 @@ export async function adoptRemoteRoomState(
   const version = remote.version;
   if (typeof version !== "number" || !Number.isFinite(version) || version < 1) return false;
 
-  const patch: { version: number; status?: MatchStatus } = { version: Math.floor(version) };
+  const patch: {
+    version: number;
+    status?: MatchStatus;
+    currentTurn?: PlayerColor;
+    turnNumber?: number;
+  } = { version: Math.floor(version) };
+
   if (isMatchStatus(remote.status)) patch.status = remote.status;
+
+  // Adopting the version alone is not enough to leave the conflict behind. The
+  // version says the board moved on; it does not say to whom. A local session
+  // that kept its own idea of the turn after a collision would re-offer the
+  // board to the player who has already played — a "your turn" on a move the
+  // server already accepted, which the next move then loses on.
+  if (remote.current_turn === "black" || remote.current_turn === "white") {
+    patch.currentTurn = remote.current_turn;
+  }
+  if (typeof remote.turn_number === "number" && remote.turn_number > 0) {
+    patch.turnNumber = remote.turn_number;
+  }
 
   const db = getLocalDb();
   if (!(await db.games.get(roomId))) return false;

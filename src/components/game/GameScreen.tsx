@@ -264,20 +264,44 @@ export function GameScreen({
     // new match is played by the same two people in the same channel. The keys
     // are the shared, namespaced ones — a hand-written `room:<id>:seat` here
     // would silently mint a fresh token and hand the player the other seat.
-    const blackToken = isRealtime
-      ? (readSessionValue(seatTokenKey(roomId as string)) ?? createSeatToken())
-      : createSeatToken();
-    const whiteToken = isRealtime
-      ? (readSessionValue(opponentTokenKey(roomId as string)) ?? null)
-      : null;
+    //
+    // The two tokens are read into one pair and then written back to the pair
+    // the session needs, rather than the seat key always becoming black. The
+    // seat key holds *this browser's* token, so for the white player it is the
+    // white token; assigning it to `playerBlackToken` as the one-line version
+    // did inverted both seats, handing White the black seat and the opponent
+    // theirs on every rematch they started.
+    const isOnline = isRealtime && roomId !== null;
+    const currentSeat = seat;
+    const storedSeatToken = isOnline ? readSessionValue(seatTokenKey(roomId)) : null;
+    const storedOpponentToken = isOnline ? readSessionValue(opponentTokenKey(roomId)) : null;
+
+    let blackToken: string;
+    let whiteToken: string | null;
+
+    if (!isOnline) {
+      blackToken = createSeatToken();
+      whiteToken = null;
+    } else if (currentSeat === "white") {
+      // White keeps its own token; Black's is the opponent's, if it is known.
+      whiteToken = storedSeatToken ?? createSeatToken();
+      blackToken = storedOpponentToken ?? createSeatToken();
+    } else {
+      // Black keeps its own token. White's stays null when the opponent token
+      // was never observed — a rematch before the guest ever arrived must not
+      // invent a third seat.
+      blackToken = storedSeatToken ?? createSeatToken();
+      whiteToken = storedOpponentToken;
+    }
+
     adoptSession(
       createGameSession({
-        id: isRealtime && roomId ? roomId : createId(),
+        id: isOnline ? (roomId as string) : createId(),
         gameKind,
-        mode: isRealtime ? "online_realtime" : "offline_local",
+        mode: isOnline ? "online_realtime" : "offline_local",
         playerBlackToken: blackToken,
         playerWhiteToken: whiteToken,
-        localSeat: seat,
+        localSeat: currentSeat,
       })
     );
   }, [adoptSession, gameKind, isRealtime, roomId, seat]);

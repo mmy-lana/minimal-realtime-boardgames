@@ -266,6 +266,26 @@ begin
     return 'payload_too_large';
   end if;
 
+  if p_payload is not null and octet_length(p_payload) > 1024 then
+    return 'payload_too_large';
+  end if;
+
+  -- Turn pass rule is only permissible for the two games that have one.
+  --
+  -- The flag means "the mover keeps the turn", which is overloaded: Reversi
+  -- uses it because the opponent has no legal reply, and Checkers uses it
+  -- because a capture chain is a single move that must not be interrupted.
+  -- Restricting this to Reversi alone would reject every mid-chain jump in a
+  -- Checkers match — a legal, core action refused with a payload error. The
+  -- turn-hijack the guard exists to stop is a client *inventing* the flag on a
+  -- game that has no such rule; allowing it for the two games that do have one
+  -- costs nothing, because on those the flag is what keeps the server in step
+  -- with the client's engine.
+  if coalesce(p_passes_turn, false)
+     and v_room.game_kind not in ('reversi', 'checkers') then
+    return 'invalid_payload_kind';
+  end if;
+
   -- `is distinct from` rather than `<>`: a snapshot with no `kind` key, or one
   -- whose kind is JSON null, compares as NULL under `<>`, and a NULL condition
   -- is not TRUE — so the obvious spelling silently admits exactly the malformed
@@ -411,6 +431,20 @@ begin
 
   if p_status is null then
     return 'invalid_status';
+  end if;
+
+  -- Enforce transition legitimacy: reset requires active status; resign requires caller loss.
+  if p_clear_history then
+    if p_status <> 'active' or p_winner is not null then
+      return 'invalid_status';
+    end if;
+  else
+    if p_status = 'won_black' and (v_room.player_white_token is null or v_room.player_white_token <> p_player_token) then
+      return 'unauthorized';
+    end if;
+    if p_status = 'won_white' and (v_room.player_black_token is null or v_room.player_black_token <> p_player_token) then
+      return 'unauthorized';
+    end if;
   end if;
 
   -- The same payload bounds as submit_turn_move, and for the same reason: this

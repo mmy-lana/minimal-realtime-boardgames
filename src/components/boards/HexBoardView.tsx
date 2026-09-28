@@ -169,13 +169,18 @@ function VerticalGoalEdge({ side, edge }: { readonly side: "left" | "right"; rea
   return (
     <div
       data-goal-edge={`${edge}-${side}`}
-      className="flex items-center gap-1"
+      className="flex items-center gap-0.5 sm:gap-1"
       style={{ gridArea: `2 / ${side === "left" ? 1 : 3}` }}
     >
       {side === "left" ? <EdgeRail edge={edge} side={side} /> : null}
-      <span className={cn("flex flex-col items-center gap-1", CAPTION_CLASS)}>
+      <span
+        className={cn("flex flex-col items-center gap-0.5 text-[8px] sm:gap-1 sm:text-[9px]", CAPTION_CLASS)}
+      >
         <EdgeArrow direction={arrow} />
-        <span data-edge-words="" className="whitespace-nowrap [writing-mode:vertical-rl]">
+        <span
+          data-edge-words=""
+          className="whitespace-nowrap tracking-normal [writing-mode:vertical-rl] sm:tracking-[0.12em]"
+        >
           {edge === "black" ? EDGE_LABEL : OPPONENT_EDGE_LABEL}
         </span>
         <EdgeArrow direction={arrow} />

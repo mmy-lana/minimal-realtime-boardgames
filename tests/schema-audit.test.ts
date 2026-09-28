@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const schemaPath = fileURLToPath(new URL("../supabase/schema.sql", import.meta.url));
+const factoryPath = fileURLToPath(new URL("../src/engine/factory.ts", import.meta.url));
 const schema = readFileSync(schemaPath, "utf8");
 
 /** The body of one `create or replace function`, from its signature to its `$$;`. */
@@ -117,8 +118,83 @@ describe("SEC-AUDIT-01: the epoch is a real, persisted part of the schema", () =
   });
 });
 
-/** The argument types of a function definition, in order, as grants spell them. */
-function argumentTypes(name: string): string[] {
+describe("SEC-AUDIT-02: the turn-pass guard matches the engines that use the flag", () => {
+  // The set of games that may legitimately send `p_passes_turn` is not a
+  // design decision made in the SQL — it is a fact about the TypeScript. The
+  // flag means "the mover keeps the turn", and the two games that have such a
+  // rule arrive at it by completely different reasoning: Reversi because the
+  // opponent has no legal reply, Checkers because a capture chain is one move
+  // that must not be interrupted mid-way.
+  //
+  // This block exists because the guard was first written for Reversi alone,
+  // which would have rejected every mid-chain jump in a Checkers match — a
+  // legal, core action refused by the server with a payload error, and a
+  // failure that no unit test could see because there is no Postgres in CI.
+  // Deriving the expected list from the factory instead of restating it means
+  // the next game that grows a turn-pass rule fails here, loudly, at the point
+  // where the SQL would otherwise reject its moves in production.
+
+  it("derives the games that can set passesTurn to something other than false", () => {
+    expect(gamesThatCanPassTheTurn()).toEqual(["checkers", "reversi"]);
+  });
+
+  it("allows exactly those games in submit_turn_move", () => {
+    const body = functionBody("submit_turn_move");
+    expect(body).toMatch(/if coalesce\(p_passes_turn, false\)[\s\S]*?then\s*return 'invalid_payload_kind';/);
+
+    // Bounded to the `if ... end if;` block: the rest of the function quotes
+    // other literals (`'white'`, `'active'`, the result codes) that are not
+    // game kinds and would otherwise be read as part of the whitelist.
+    const guardStart = body.indexOf("if coalesce(p_passes_turn, false)");
+    const guard = body.slice(guardStart, body.indexOf("end if;", guardStart));
+    // Read the list out of the SQL itself, so the assertion is "the SQL and the
+    // engines agree" rather than "the SQL says what this test says".
+    const listed = [...guard.matchAll(/'([a-z0-9]+)'/g)].map((m) => m[1]!);
+    expect(listed.sort()).toEqual(gamesThatCanPassTheTurn());
+  });
+
+  it("rejects a pass claim for a game with no such rule", () => {
+    // The guard has to be a whitelist rather than a blacklist, or a game added
+    // to the enum later would be pass-claiming by default.
+    const body = functionBody("submit_turn_move");
+    expect(body).toMatch(/not in \('reversi', 'checkers'\)/);
+  });
+});
+
+/**
+ * The game kinds whose factory can set `passesTurn` to a non-constant, taken
+ * from the engines themselves.
+ *
+ * Each engine in `factory.ts` is a top-level `const <kind>Engine: SessionEngine`
+ * whose `toNormalized` builds a payload; a game that can pass the turn is one
+ * whose `passesTurn` is anything other than the literal `false`. The engine
+ * name is the source of the kind, so the two halves of this file cannot drift.
+ */
+function gamesThatCanPassTheTurn(): string[] {
+  const source = readFileSync(factoryPath, "utf8");
+  const found: string[] = [];
+
+  for (const match of source.matchAll(/const (\w+)Engine: SessionEngine = \{/g)) {
+    const engineName = match[1]!;
+
+    // From this engine's opening brace to the next top-level engine, or to the
+    // end of the file for the last one. A game kind whose body mentions
+    // `replayMoves` is not an engine and is skipped by the same boundary.
+    const start = match.index!;
+    const rest = source.slice(start + match[0].length);
+    const nextEngine = rest.search(/\nconst \w+Engine: SessionEngine = \{/);
+    const body = nextEngine === -1 ? rest : rest.slice(0, nextEngine);
+
+    const passesTurn = body.match(/passesTurn:\s*([^,\n]+)/);
+    if (passesTurn && passesTurn[1]!.trim() !== "false") {
+      found.push(engineName);
+    }
+  }
+
+  return found.sort();
+}
+
+/** The argument types of a function definition, in order, as grants spell them. */function argumentTypes(name: string): string[] {
   const marker = `create or replace function public.${name}(`;
   const start = schema.indexOf(marker);
   expect(start, `public.${name} is not defined in schema.sql`).toBeGreaterThan(-1);

@@ -213,13 +213,13 @@ export function ConnectFourBoardView({
               <button
                 type="button"
                 className={cn(
-                  "absolute inset-0 z-10 rounded-xl",
+                  "absolute inset-0 z-10 min-h-[44px] rounded-xl",
                   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white",
                   playable && !disabled && "cursor-pointer hover:bg-white/5"
                 )}
                 aria-label={
                   playable
-                    ? `Column ${x + 1}, drop a disc in row ${CONNECT4_ROWS - row} from the top`
+                    ? `Column ${x + 1}, drop a disc in row ${CONNECT4_ROWS - row} from the top. Press Enter or Space to drop.`
                     : `Column ${x + 1}, full`
                 }
                 disabled={!playable}

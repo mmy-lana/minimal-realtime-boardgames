@@ -27,6 +27,14 @@
   --color-status-error: #b91c1c;
   --color-status-idle: #737373;
 
+  /* Short aliases for the three status accents above. Same values, and they
+     stay the same: the long names read as a category, the short ones read as a
+     utility, and a component that wants "this went wrong" should not have to
+     remember which half of the two-word name carries the meaning. */
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-error: #b91c1c;
+
   /* The winning line. Deliberately *not* `status-live`: a live match is not a
      won one, and a green that means both says neither. `win-wash` is the same
      hue at a fifth of the strength, for a fill that sits *under* a stone

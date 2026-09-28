@@ -70,14 +70,38 @@ export function GameLobby({ games, initialMode }: GameLobbyProps): React.ReactEl
         return;
       }
       setPendingKind(kind);
-      // The room id is minted here and the seat token is generated alongside
-      // it, so the URL the player shares is the whole invitation.
       const roomId = createId();
       const seat = createSeatToken();
-      // The keys come from `seatStorage` so the lobby and the route the player
-      // is about to land on cannot disagree about where the token was put.
       writeSessionValue(seatTokenKey(roomId), seat);
       writeSessionValue(seatColorKey(roomId), "black");
+
+      // The room id and seat token are minted here but the `game_rooms` row is
+      // written later, on the route's first load. Seeding the local session in
+      // Dexie now closes that gap: without it the host navigates to a room
+      // whose local record does not exist yet, and the route falls back to
+      // building an empty session from scratch — which loses the host's own
+      // seat token and, with it, the seat claim.
+      //
+      // Deliberately fire-and-forget and deliberately not awaited: the
+      // navigation below is the player's action and must not be held hostage
+      // to an IndexedDB write. A failure here costs a re-fetch, not a wrong
+      // board, because the route treats the local record as a cache and
+      // re-derives it from the server regardless.
+      void (async () => {
+        const { createGameSession } = await import("@/hooks/useGameSession");
+        const { isLocalDbAvailable, putSession } = await import("@/lib/db");
+        if (!isLocalDbAvailable()) return;
+        const session = createGameSession({
+          id: roomId,
+          gameKind: kind,
+          mode: "online_realtime",
+          playerBlackToken: seat,
+          playerWhiteToken: null,
+          localSeat: "black",
+        });
+        await putSession(session);
+      })();
+
       router.push(`/${kind}/${roomId}`);
     },
     [isOnline, mode, router]

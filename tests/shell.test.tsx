@@ -1756,9 +1756,16 @@ describe("board sizing", () => {
     );
 
     // Row 0 is the top, so the landing row is 3 and the column's own label says
-    // the same thing in words — the preview and the announcement agree.
+    // the same thing in words — the preview and the announcement agree. The
+    // trailing sentence is the keyboard affordance: these are buttons, and a
+    // screen-reader user is told which keys do the thing they can see.
     const column = screen.getByRole("button", { name: /Column 4,/ });
-    expect(column.getAttribute("aria-label")).toBe("Column 4, drop a disc in row 3 from the top");
+    expect(column.getAttribute("aria-label")).toBe(
+      "Column 4, drop a disc in row 3 from the top. Press Enter or Space to drop."
+    );
+    // And the touch target is not smaller than a fingertip, which is the whole
+    // reason a per-cell overlay exists at all on a phone.
+    expect(column.className).toContain("min-h-[44px]");
 
     const playfield = container.querySelector("[data-c4-playfield]") as HTMLElement;
     const columns = [...playfield.children] as HTMLElement[];

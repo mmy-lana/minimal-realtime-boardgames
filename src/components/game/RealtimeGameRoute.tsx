@@ -85,14 +85,57 @@ export function RealtimeGameRoute({
       const seatKey = seatTokenKey(roomId);
       const colorKey = seatColorKey(roomId);
       let token = readSessionValue(seatKey);
-      let seat: PlayerColor = readSessionValue(colorKey) === "white" ? "white" : "black";
+      const savedColor = readSessionValue(colorKey);
+      // The seat this browser believes it holds, pending the server's answer.
+      // `joinRoom` is authoritative and the assignment below overwrites this.
+      let seat: PlayerColor = savedColor === "white" ? "white" : "black";
+      // A host is the one browser that minted the room: it already holds a
+      // token *and* the black colour key, both written by the lobby. Only that
+      // browser may create the row — a guest arriving at a room that does not
+      // exist yet has no business conjuring it into existence.
+      const isHost = savedColor === "black" && token !== null;
 
       if (token === null) {
         token = createSeatToken();
       }
 
       try {
-        const code = await joinRoom(roomId, token);
+        let code = await joinRoom(roomId, token);
+
+        // If the room does not exist yet on Supabase and this client is the
+        // designated host, create it. The lobby mints a room id and a token
+        // before the row exists, so the host's very first navigation can land
+        // before the insert has happened; without this the host is told "This
+        // room does not exist" about a room they just made.
+        if (code === "room_not_found" && isHost) {
+          const { getSupabaseClient } = await import("@/lib/supabase");
+          const { getSessionEngine } = await import("@/engine/factory");
+          const supabase = getSupabaseClient();
+          const engine = getSessionEngine(gameKind);
+          const initialBoard = engine.createInitialBoard();
+          const nowIso = new Date().toISOString();
+
+          await supabase.from("game_rooms").upsert(
+            {
+              id: roomId,
+              game_kind: gameKind,
+              status: "waiting",
+              player_black_token: token,
+              player_white_token: null,
+              current_turn: "black",
+              turn_number: 1,
+              board_snapshot: initialBoard,
+              winner: null,
+              version: 1,
+              created_at: nowIso,
+              updated_at: nowIso,
+            },
+            { onConflict: "id", ignoreDuplicates: true }
+          );
+
+          code = await joinRoom(roomId, token);
+        }
+
         if (cancelled) return;
         if (!isJoinSuccess(code)) {
           setEntry({
@@ -103,11 +146,25 @@ export function RealtimeGameRoute({
                 : code === "room_not_found"
                   ? "This room does not exist. The link may be incomplete or the room may have been removed."
                   : code === "room_closed"
-                  ? "This room has been closed by its host. Ask them for a new link."
-                  : "This room could not be joined. Try again in a moment.",
+                    ? "This room has been closed by its host. Ask them for a new link."
+                    : "This room could not be joined. Try again in a moment.",
           });
           return;
         }
+
+        // The seat comes from the RPC's own assignment rather than from the
+        // colour key this browser happened to have cached. The key is a
+        // *guess* made before the join; the server is what actually decided,
+        // and every downstream credential is built from that decision.
+        const assignedSeat: PlayerColor = code === "seated_white" ? "white" : "black";
+
+        // Written only after the join succeeded: a token for a seat this browser
+        // does not hold is worse than no token, because the next load would skip
+        // the claim entirely and present a board it is not seated to play.
+        writeSessionValue(seatKey, token as string);
+        writeSessionValue(colorKey, assignedSeat);
+
+        seat = assignedSeat;
       } catch (error: unknown) {
         if (cancelled) return;
         setEntry({
@@ -119,12 +176,6 @@ export function RealtimeGameRoute({
         });
         return;
       }
-
-      // Written only after the join succeeded: a token for a seat this browser
-      // does not hold is worse than no token, because the next load would skip
-      // the claim entirely and present a board it is not seated to play.
-      writeSessionValue(seatKey, token as string);
-      writeSessionValue(colorKey, seat);
 
       // A locally cached copy of this room is the verification baseline. If
       // there is none — a second player arriving for the first time — an empty
@@ -208,8 +259,36 @@ export function RealtimeGameRoute({
       .finally(() => setIsVerifying(false));
   }, [realtime]);
 
+  // `navigator.clipboard` is undefined outside a secure context and blocked in
+  // some in-app webviews, and `?.` alone turns that into a silent no-op: the
+  // player taps "Copy link" and nothing happens and nothing is said. The
+  // fallback uses the legacy selection trick, which works wherever a document
+  // exists.
+  const fallbackCopy = (text: string) => {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    } catch {
+      // Best effort: a browser that refuses both paths has no copy affordance
+      // left, and the URL is visible in the address bar regardless.
+    }
+  };
+
   const copyLink = useCallback(() => {
-    void navigator.clipboard?.writeText(window.location.href);
+    const url = window.location.href;
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      void navigator.clipboard.writeText(url).catch(() => {
+        fallbackCopy(url);
+      });
+    } else {
+      fallbackCopy(url);
+    }
   }, []);
 
   // Verification gates the board. Until the replay has agreed with the

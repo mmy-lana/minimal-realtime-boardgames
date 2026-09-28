@@ -211,9 +211,15 @@ export function useSupabaseRealtime(
       // epochs stay in the table forever — a reset preserves the game that came
       // before it — so filtering by room alone would replay the abandoned game
       // on top of the new one and produce a board that matches nothing.
+      // The epoch and the authoritative board snapshot are loaded together.
+      // They are two columns of one row and one round trip, and the snapshot is
+      // the thing the replay is about to be judged against — comparing against
+      // anything else compares the server's move log against this browser's own
+      // possibly-stale copy, which is a check that can only ever prove the
+      // browser agrees with itself.
       const roomResult = await supabase
         .from("game_rooms")
-        .select("reset_epoch")
+        .select("reset_epoch, board_snapshot")
         .eq("id", roomId)
         .single();
 
@@ -223,7 +229,12 @@ export function useSupabaseRealtime(
         return false;
       }
 
-      const epoch = readEpoch((roomResult.data as { reset_epoch?: unknown } | null)?.reset_epoch);
+      const roomData = roomResult.data as {
+        reset_epoch?: unknown;
+        board_snapshot?: unknown;
+      } | null;
+      const epoch = readEpoch(roomData?.reset_epoch);
+      const serverSnapshot = roomData?.board_snapshot;
       epochRef.current = epoch;
 
       const { data, error } = await supabase
@@ -283,7 +294,15 @@ export function useSupabaseRealtime(
 
       assertBoardSnapshot(board, session.gameKind);
 
-      if (!boardStatesEqual(board, session.boardSnapshot)) {
+      // The server's own snapshot is the baseline. Falling back to the local
+      // session keeps the gate meaningful when the row carries no usable
+      // snapshot rather than silently skipping the comparison altogether.
+      const snapshotTarget =
+        serverSnapshot && typeof serverSnapshot === "object" && "kind" in serverSnapshot
+          ? (serverSnapshot as UniversalBoard)
+          : session.boardSnapshot;
+
+      if (!boardStatesEqual(board, snapshotTarget)) {
         raiseConflict("The board on the server does not match its own move history.");
         return false;
       }
