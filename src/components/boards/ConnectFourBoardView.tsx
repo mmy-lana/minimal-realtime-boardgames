@@ -134,7 +134,7 @@ export function ConnectFourBoardView({
               role="row"
               className="relative grid"
               style={{
-                gridTemplateColumns: `repeat(${CONNECT4_ROWS}, minmax(0, 1fr))`,
+                gridTemplateRows: `repeat(${CONNECT4_ROWS}, minmax(0, 1fr))`,
               }}
             >
               {Array.from({ length: CONNECT4_ROWS }, (_, y) => {

@@ -207,7 +207,7 @@ export function GameShell({
 
   return (
     <div
-      className="flex min-h-dvh flex-col bg-board-light text-board-dark"
+      className="flex min-h-dvh w-full flex-col bg-board-light text-board-dark"
       // A page that grows past the viewport height gets a scrollbar, and a
       // scrollbar takes width. Reserving its gutter permanently means the board
       // and the rail are laid out against the same width whether or not the
@@ -272,12 +272,9 @@ export function GameShell({
           `items-start` pins both columns to the top so a growing rail grows
           downward only, and `justify-center` centres the pair as a unit in the
           space left over. */}
-      <main className="flex min-h-0 flex-1 flex-col items-center gap-4 p-4 md:flex-row md:items-start md:justify-center md:gap-6 md:p-6">
-        {/* The board column. `md:w-0` makes its base width zero so `flex-1`
-            does all the sizing: a flex item's default base size is its content,
-            so without this the column would be sized by the rail's widest
-            moment and the board would move sideways when that moment arrived. */}
-        <div className="flex w-full min-w-0 flex-col items-center gap-3 md:w-0 md:flex-1">
+      <main className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col items-center gap-6 p-4 md:flex-row md:items-start md:justify-center md:gap-8 md:p-6">
+        {/* The board column expands to take all remaining space alongside the 320px rail */}
+        <div className="flex w-full min-w-0 flex-1 flex-col items-center gap-4">
           {boardHeader}
 
           <BoardStage gameKind={gameKind} size={cellSize} isDesktop={isDesktop}>
