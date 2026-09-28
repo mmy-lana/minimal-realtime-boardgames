@@ -34,6 +34,7 @@ import {
   type UniversalBoard,
 } from "@/engine/types";
 import { createId, createSeatToken } from "@/lib/utils";
+import { opponentTokenKey, readSessionValue, seatTokenKey } from "@/lib/seatStorage";
 import { Button } from "@/components/primitives/Button";
 import { GameShell } from "@/components/compound/GameShell";
 import type { GameOverReason } from "@/components/compound/GameOverDialog";
@@ -250,12 +251,14 @@ export function GameScreen({
 
   const startNewGame = useCallback(() => {
     // A realtime room keeps the seat tokens the invite established, so the
-    // new match is played by the same two people in the same channel.
+    // new match is played by the same two people in the same channel. The keys
+    // are the shared, namespaced ones — a hand-written `room:<id>:seat` here
+    // would silently mint a fresh token and hand the player the other seat.
     const blackToken = isRealtime
-      ? (sessionStorage.getItem(`room:${roomId}:seat`) ?? createSeatToken())
+      ? (readSessionValue(seatTokenKey(roomId as string)) ?? createSeatToken())
       : createSeatToken();
     const whiteToken = isRealtime
-      ? (sessionStorage.getItem(`room:${roomId}:opponent`) ?? null)
+      ? (readSessionValue(opponentTokenKey(roomId as string)) ?? null)
       : null;
     adoptSession(
       createGameSession({

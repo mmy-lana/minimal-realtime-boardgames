@@ -28,6 +28,12 @@ import { useSupabaseRealtime } from "@/hooks/useSupabaseRealtime";
 import { createGameSession } from "@/hooks/useGameSession";
 import { getSessionById, isLocalDbAvailable, putSession } from "@/lib/db";
 import { isJoinSuccess, joinRoom } from "@/lib/sync";
+import {
+  readSessionValue,
+  seatColorKey,
+  seatTokenKey,
+  writeSessionValue,
+} from "@/lib/seatStorage";
 import { getSupabaseConfigError } from "@/lib/supabase";
 import { createSeatToken } from "@/lib/utils";
 import type { GameKind, GameSession, PlayerColor } from "@/engine/types";
@@ -42,14 +48,6 @@ type Entry =
   | { readonly state: "loading" }
   | { readonly state: "ready"; readonly session: GameSession; readonly seat: PlayerColor }
   | { readonly state: "blocked"; readonly message: string };
-
-const SEAT_KEY = "seat";
-const SEAT_COLOR_KEY = "seat-color";
-
-function readStored(key: string): string | null {
-  if (typeof window === "undefined") return null;
-  return sessionStorage.getItem(key);
-}
 
 export function RealtimeGameRoute({
   gameKind,
@@ -80,10 +78,14 @@ export function RealtimeGameRoute({
         return;
       }
 
-      const seatKey = `room:${roomId}:${SEAT_KEY}`;
-      const seatColorKey = `room:${roomId}:${SEAT_COLOR_KEY}`;
-      let token = readStored(seatKey);
-      let seat: PlayerColor = readStored(seatColorKey) === "white" ? "white" : "black";
+      // The key is built by `seatStorage`, not by a literal here: the lobby
+      // wrote this entry, so the two have to agree on one string. A key with
+      // no application prefix is a key anything else on the origin can also
+      // write, and a room id is not a secret.
+      const seatKey = seatTokenKey(roomId);
+      const colorKey = seatColorKey(roomId);
+      let token = readSessionValue(seatKey);
+      let seat: PlayerColor = readSessionValue(colorKey) === "white" ? "white" : "black";
 
       if (token === null) {
         token = createSeatToken();
@@ -118,10 +120,11 @@ export function RealtimeGameRoute({
         return;
       }
 
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(seatKey, token as string);
-        sessionStorage.setItem(seatColorKey, seat);
-      }
+      // Written only after the join succeeded: a token for a seat this browser
+      // does not hold is worse than no token, because the next load would skip
+      // the claim entirely and present a board it is not seated to play.
+      writeSessionValue(seatKey, token as string);
+      writeSessionValue(colorKey, seat);
 
       // A locally cached copy of this room is the verification baseline. If
       // there is none — a second player arriving for the first time — an empty

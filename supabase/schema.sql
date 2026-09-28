@@ -27,7 +27,32 @@
 -- -----------------------------------------------------------------------------
 
 do $$ begin
-  create type public.game_kind as enum ('tictactoe', 'connect4', 'gomoku', 'reversi', 'checkers', 'chess');
+  create type public.game_kind as enum ('tictactoe', 'connect4', 'gomoku', 'reversi', 'checkers', 'hex');
+exception when duplicate_object then null; end $$;
+
+-- A deployment that already has the enum still holds the old 'chess' label.
+-- Renaming the value in place is the only migration that keeps the rooms
+-- already stored in `game_rooms` readable: the rows keep the same ordinal,
+-- and no `update ... set game_kind = 'hex'` is needed (or possible, since the
+-- new label does not exist until this statement has run).
+--
+-- Three outcomes, all of them "already correct" for a re-run:
+--   * fresh install  -> 'chess' is absent      -> undefined_object
+--   * migrated       -> 'hex' present, no 'chess' -> undefined_object
+--   * mid-migration  -> both present           -> the rename runs
+do $$ begin
+  alter type public.game_kind rename value 'chess' to 'hex';
+exception
+  when undefined_object then null;
+  when duplicate_object then null;
+  when syntax_error then null;
+end $$;
+
+-- Belt and braces for a database where the enum was hand-edited and ended up
+-- with neither label, and for PostgreSQL < 10 where ALTER TYPE ... RENAME VALUE
+-- does not exist at all (there it reports undefined_object via its wrapper).
+do $$ begin
+  alter type public.game_kind add value if not exists 'hex';
 exception when duplicate_object then null; end $$;
 
 do $$ begin
@@ -118,6 +143,25 @@ create policy "Allow reading game moves"
 -- -----------------------------------------------------------------------------
 -- RPC: submit_turn_move
 -- -----------------------------------------------------------------------------
+--
+-- PAYLOAD BOUNDS
+--
+-- `p_board_snapshot` is the one argument a client can make arbitrarily large,
+-- and it is stored verbatim in `game_rooms.board_snapshot` and served back to
+-- every subscriber through Realtime. A board rule violation is a client-
+-- authoritative concern (see the trust model above), but *size* and *shape*
+-- are not: an 8 MB JSON blob would be replayed to both clients on every ply
+-- and kept in WAL forever. So the RPC bounds two things it can check without
+-- knowing the rules of any particular game:
+--
+--   * the serialized size, capped at 8192 bytes, which is roughly 4x the
+--     largest legal board this app can produce (a 15x15 Gomoku position with
+--     full history in the payload) and small enough that a Realtime frame
+--     stays cheap;
+--   * the `kind` discriminator, which must name the same game as the room. A
+--     snapshot of the wrong game can never be replayed by the receiving
+--     client, so accepting one would poison the room at exactly the moment the
+--     integrity gate reads it.
 
 create or replace function public.submit_turn_move(
   p_room_id uuid,
@@ -178,6 +222,23 @@ begin
        or v_room.current_turn <> 'white' then
       return 'unauthorized';
     end if;
+  end if;
+
+  -- Payload bounds. Checked after authorization so an unauthenticated caller
+  -- cannot use these two codes as an oracle for whether a room exists, and
+  -- before the insert so nothing oversized ever reaches `game_moves` or the
+  -- `game_rooms` row.
+  if p_board_snapshot is null
+     or octet_length(p_board_snapshot::text) > 8192 then
+    return 'payload_too_large';
+  end if;
+
+  -- `is distinct from` rather than `<>`: a snapshot with no `kind` key, or one
+  -- whose kind is JSON null, compares as NULL under `<>`, and a NULL condition
+  -- is not TRUE — so the obvious spelling silently admits exactly the malformed
+  -- payload this line exists to reject.
+  if (p_board_snapshot ->> 'kind') is distinct from v_room.game_kind::text then
+    return 'invalid_payload_kind';
   end if;
 
   -- Idempotent move insertion: a retried request must not duplicate a ply.
@@ -313,6 +374,18 @@ begin
     return 'invalid_status';
   end if;
 
+  -- The same payload bounds as submit_turn_move, and for the same reason: this
+  -- function writes `board_snapshot` on a room that already exists, so an
+  -- unbounded blob here would be just as durable and just as widely broadcast.
+  if p_board_snapshot is null
+     or octet_length(p_board_snapshot::text) > 8192 then
+    return 'payload_too_large';
+  end if;
+
+  if (p_board_snapshot ->> 'kind') is distinct from v_room.game_kind::text then
+    return 'invalid_payload_kind';
+  end if;
+
   if p_clear_history then
     delete from public.game_moves where room_id = p_room_id;
   end if;
@@ -335,19 +408,52 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Grants
 -- -----------------------------------------------------------------------------
+--
+-- `SECURITY DEFINER` means the functions run as the migration role, so the
+-- default `EXECUTE` granted to `PUBLIC` would let any authenticated *or*
+-- anonymous caller run them as the owner. Each function is therefore revoked
+-- from `PUBLIC` and re-granted to exactly the two roles the browser can hold.
+-- Both statements are unconditional and repeatable: `revoke` and `grant` have
+-- no "already done" state to guard against, so re-running this file changes
+-- nothing and cannot leave a function executable by a role nobody audited.
+--
+-- The RLS policies above are idempotent by construction as well — PostgreSQL
+-- has no `create policy if not exists`, so every policy is paired with a
+-- `drop policy if exists` of the same name in the drop block above.
 
-revoke execute on function public.submit_turn_move from public;
-grant execute on function public.submit_turn_move to anon, authenticated;
+revoke execute on function public.submit_turn_move(uuid, text, integer, uuid, integer, public.player_color, jsonb, jsonb, text, jsonb, public.player_color, public.match_status, boolean) from public;
+grant execute on function public.submit_turn_move(uuid, text, integer, uuid, integer, public.player_color, jsonb, jsonb, text, jsonb, public.player_color, public.match_status, boolean) to anon, authenticated;
 
-revoke execute on function public.join_room from public;
-grant execute on function public.join_room to anon, authenticated;
+revoke execute on function public.join_room(uuid, text) from public;
+grant execute on function public.join_room(uuid, text) to anon, authenticated;
 
-revoke execute on function public.submit_terminal_update from public;
-grant execute on function public.submit_terminal_update to anon, authenticated;
+revoke execute on function public.submit_terminal_update(uuid, text, integer, jsonb, public.player_color, integer, public.player_color, public.match_status, boolean) from public;
+grant execute on function public.submit_terminal_update(uuid, text, integer, jsonb, public.player_color, integer, public.player_color, public.match_status, boolean) to anon, authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Realtime
 -- -----------------------------------------------------------------------------
+--
+-- `alter publication ... add table` has no `if not exists` form and raises
+-- "table is already member of publication" on a second run, so the membership
+-- check is made explicit here. Without it the file's promise of being
+-- re-runnable stops at the last fifteen lines, which is the worst place for it
+-- to stop: everything above has already been applied.
 
-alter publication supabase_realtime add table public.game_rooms;
-alter publication supabase_realtime add table public.game_moves;
+do $$ begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'game_rooms'
+  ) then
+    alter publication supabase_realtime add table public.game_rooms;
+  end if;
+
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'game_moves'
+  ) then
+    alter publication supabase_realtime add table public.game_moves;
+  end if;
+end $$;

@@ -18,7 +18,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { decodeMovePayload, type GameSession, type MoveRecord, type PlayerColor } from "@/engine/types";
+import { decodeMovePayload, isMatchStatus, type GameSession, type MatchStatus, type MoveRecord, type PlayerColor } from "@/engine/types";
 import type { SyncQueueAction, SyncQueueItem } from "@/engine/types";
 
 import { getLocalDb, isLocalDbAvailable } from "./db";
@@ -37,6 +37,8 @@ export const SUBMIT_TURN_MOVE_CODES = [
   "room_inactive",
   "version_conflict",
   "unauthorized",
+  "payload_too_large",
+  "invalid_payload_kind",
 ] as const;
 export type SubmitTurnMoveCode = (typeof SUBMIT_TURN_MOVE_CODES)[number];
 
@@ -55,6 +57,8 @@ export const SUBMIT_TERMINAL_UPDATE_CODES = [
   "version_conflict",
   "unauthorized",
   "invalid_status",
+  "payload_too_large",
+  "invalid_payload_kind",
 ] as const;
 export type SubmitTerminalUpdateCode = (typeof SUBMIT_TERMINAL_UPDATE_CODES)[number];
 
@@ -75,6 +79,89 @@ export function isJoinSuccess(code: JoinRoomCode): boolean {
 /** `true` when the code represents a transient, retryable OCC collision. */
 export function isTransientConflictCode(code: string): boolean {
   return code === "version_conflict";
+}
+
+/* -------------------------------------------------------------------------- */
+/* Optimistic-concurrency recovery                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Floor for the pause between an OCC collision and the retry.
+ *
+ * A `version_conflict` means the *other* client just wrote the row, which
+ * means a Realtime `game_rooms` UPDATE is in flight for this same room. It also
+ * means this client's local `version` is one behind. Re-issuing the RPC
+ * immediately is not only pointless — the retry would have to be issued with
+ * the version that was stale a moment ago — it is also the fastest possible
+ * race with the incoming channel event, which adopts that same update a few
+ * hundred milliseconds later and can overwrite the version the retry just
+ * installed. Waiting lets the two converge through the same path, once.
+ */
+export const CONFLICT_BACKOFF_BASE_MS = 300;
+
+/** Exponential backoff for the `n`th collision: 300ms, 600ms, 1200ms, … */
+export function conflictBackoffMs(retryCount: number): number {
+  const step = Number.isFinite(retryCount) ? Math.max(0, Math.floor(retryCount)) : 0;
+  return CONFLICT_BACKOFF_BASE_MS * 2 ** Math.min(step, 8);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/**
+ * Re-reads the authoritative row and adopts its version and status locally.
+ *
+ * This is what turns a collision from a dead end into one wasted attempt. The
+ * old code re-sent `p_expected_version: session.version` — the value the server
+ * had *already* rejected — so every subsequent attempt failed with the same
+ * `version_conflict` until the ladder gave up and flagged the room as a
+ * conflict. No amount of retrying could have succeeded, because the number
+ * being retried was never going to change on its own.
+ *
+ * Only the two OCC-relevant fields are written. The board snapshot, the move
+ * history and the sync state are the local client's own and are strictly ahead
+ * of the server's; overwriting them with the row just read would discard the
+ * very move that triggered the retry.
+ *
+ * Returns `false` when the room could not be read, which leaves the local
+ * version alone: the retry then behaves exactly as before rather than
+ * adopting a guess.
+ */
+export async function adoptRemoteRoomState(
+  supabase: SupabaseClient,
+  roomId: string
+): Promise<boolean> {
+  let remote: { version?: unknown; status?: unknown } | null = null;
+
+  try {
+    const result = await supabase
+      .from("game_rooms")
+      .select("version, status")
+      .eq("id", roomId)
+      .single();
+    if (result.error) return false;
+    remote = result.data as { version?: unknown; status?: unknown } | null;
+  } catch {
+    // A transport failure here is indistinguishable from a failed read, and
+    // both mean the same thing to the caller: adopt nothing, retry anyway.
+    return false;
+  }
+
+  if (remote === null || typeof remote !== "object") return false;
+
+  const version = remote.version;
+  if (typeof version !== "number" || !Number.isFinite(version) || version < 1) return false;
+
+  const patch: { version: number; status?: MatchStatus } = { version: Math.floor(version) };
+  if (isMatchStatus(remote.status)) patch.status = remote.status;
+
+  const db = getLocalDb();
+  if (!(await db.games.get(roomId))) return false;
+  await db.games.update(roomId, patch);
+  return true;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -465,10 +552,18 @@ async function runMoveItem(
     return { kind: "acknowledge" };
   }
 
-  if (isTransientConflictCode(code) && item.retryCount + 1 < SYNC_MAX_ATTEMPTS) {
+  if (isTransientConflictCode(code)) {
+    if (item.retryCount + 1 >= SYNC_MAX_ATTEMPTS) return { kind: "abandon" };
+    // Adopt the server's version before sleeping, not after: the sleep exists
+    // so the incoming Realtime event has settled, and adopting afterwards would
+    // race the very event the sleep was meant to let land.
+    await adoptRemoteRoomState(supabase, session.id);
+    await sleep(conflictBackoffMs(item.retryCount));
     return { kind: "retry" };
   }
 
+  // Anything else is a refusal rather than a race: retrying cannot change the
+  // answer, and holding the move would block every later ply of this room.
   return { kind: "abandon" };
 }
 
@@ -526,7 +621,14 @@ async function runTerminalItem(
     return { kind: "acknowledge" };
   }
 
-  if (isTransientConflictCode(code) && item.retryCount + 1 < SYNC_MAX_ATTEMPTS) {
+  if (isTransientConflictCode(code)) {
+    if (item.retryCount + 1 >= SYNC_MAX_ATTEMPTS) return { kind: "abandon" };
+    // Same recovery as a turn move: a resign or a reset that collides with the
+    // opponent's ply has to wait for their write, adopt the resulting version,
+    // and be re-sent. Without it a resignation could be reported as a sync
+    // conflict purely because the two players moved at the same moment.
+    await adoptRemoteRoomState(supabase, session.id);
+    await sleep(conflictBackoffMs(item.retryCount));
     return { kind: "retry" };
   }
 

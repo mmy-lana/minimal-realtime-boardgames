@@ -26,6 +26,7 @@ import {
   type GameMetadata,
 } from "@/engine/types";
 import { listSessionsByRecentActivity } from "@/lib/db";
+import { seatColorKey, seatTokenKey, writeSessionValue } from "@/lib/seatStorage";
 import { createId, createSeatToken, formatRelativeTime } from "@/lib/utils";
 import { Badge } from "@/components/primitives/Badge";
 import { SegmentedControl } from "@/components/primitives/SegmentedControl";
@@ -71,8 +72,10 @@ export function GameLobby({ games, initialMode }: GameLobbyProps): React.ReactEl
       // it, so the URL the player shares is the whole invitation.
       const roomId = createId();
       const seat = createSeatToken();
-      sessionStorage.setItem(`room:${roomId}:seat`, seat);
-      sessionStorage.setItem(`room:${roomId}:seat-color`, "black");
+      // The keys come from `seatStorage` so the lobby and the route the player
+      // is about to land on cannot disagree about where the token was put.
+      writeSessionValue(seatTokenKey(roomId), seat);
+      writeSessionValue(seatColorKey(roomId), "black");
       router.push(`/${kind}/${roomId}`);
     },
     [isOnline, mode, router]
