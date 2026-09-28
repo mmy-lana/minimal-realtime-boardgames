@@ -1,10 +1,13 @@
 /**
  * @vitest-environment jsdom
  */
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+// The JSX transform is automatic, but the ErrorBoundary cases call
+// `React.useEffect` directly to prove a remount, which needs the binding.
+import * as React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getSessionEngine } from "@/engine/factory";
 
 /**
@@ -21,6 +24,7 @@ const { Modal } = await import("@/components/primitives/Modal");
 const { SegmentedControl } = await import("@/components/primitives/SegmentedControl");
 const { BoardTile } = await import("@/components/primitives/BoardTile");
 const { NetworkIndicator } = await import("@/components/primitives/NetworkIndicator");
+const { ErrorBoundary } = await import("@/components/primitives/ErrorBoundary");
 
 afterEach(cleanup);
 
@@ -691,5 +695,326 @@ describe("Modal header accessory", () => {
     expect(title?.textContent).toBe("Player 1 (Black) Wins!");
     expect(title?.querySelector("[data-testid='badge']")).toBeNull();
     expect(dialog.querySelector("[data-testid='badge']")).not.toBeNull();
+  });
+});
+
+/**
+ * REL-ERR-01 — the error boundary.
+ *
+ * Each case here is a way the app used to end up as a blank page. A render
+ * that throws takes the whole tree with it, so on a page whose only job is
+ * "pick a game and play" a single unreadable IndexedDB row meant a player
+ * could not reach a single board, could not get back to the lobby, and had no
+ * UI to report it from. The boundary is what makes the failure legible and
+ * recoverable instead.
+ */
+describe("ErrorBoundary", () => {
+  /**
+   * A child whose failure is controlled by the test, not by its own execution.
+   *
+   * The first version of this fixture threw once and then rendered normally.
+   * That does not work: React re-runs a failed render pass before it commits
+   * an error to the boundary, so a child that only throws on its first call is
+   * silently recovered and the boundary never sees anything. React does the
+   * same thing to a genuinely transient fault, which is exactly why "Try
+   * again" has to be proven by an explicit remount counter below rather than
+   * by watching a throw stop happening on its own.
+   */
+  let shouldThrow = true;
+  let mountCount = 0;
+
+  function ControlledChild(): React.ReactElement {
+    React.useEffect(() => {
+      mountCount += 1;
+      return () => {
+        mountCount -= 1;
+      };
+    }, []);
+    if (shouldThrow) throw new Error("indexeddb row is not a game");
+    return <p>recovered content</p>;
+  }
+
+  /** Silences React's own error logging, which every throwing case provokes. */
+  function withQuietConsole<T>(body: () => T): T {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      return body();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  beforeEach(() => {
+    shouldThrow = true;
+    mountCount = 0;
+  });
+
+  it("renders its children untouched when nothing throws", () => {
+    shouldThrow = false;
+    render(
+      <ErrorBoundary>
+        <ControlledChild />
+      </ErrorBoundary>
+    );
+    expect(screen.getByText("recovered content")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(mountCount).toBe(1);
+  });
+
+  it("catches a render error and reports what happened", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <ErrorBoundary fallbackTitle="Could not load recent games">
+        <ControlledChild />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Could not load recent games")).toBeTruthy();
+    // The player is shown the actual failure, not merely that one occurred.
+    expect(screen.getByText("indexeddb row is not a game")).toBeTruthy();
+    // A swallowed error is a bug that will never be found; it must still log.
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("re-mounts the subtree on 'Try again' rather than re-throwing", () => {
+    withQuietConsole(() => {
+      render(
+        <ErrorBoundary>
+          <ControlledChild />
+        </ErrorBoundary>
+      );
+    });
+    // The child threw on mount, so it never got to mount at all.
+    expect(mountCount).toBe(0);
+    expect(screen.queryByText("recovered content")).toBeNull();
+
+    shouldThrow = false;
+    withQuietConsole(() => {
+      fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    });
+
+    // A real remount: the effect ran, so this is a fresh instance and not a
+    // re-render of a fiber that already failed. Clearing the error state alone
+    // would re-render the same failed children and raise the same exception.
+    expect(screen.getByText("recovered content")).toBeTruthy();
+    expect(mountCount).toBe(1);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps reporting when the retry fails too", () => {
+    withQuietConsole(() => {
+      render(
+        <ErrorBoundary>
+          <ControlledChild />
+        </ErrorBoundary>
+      );
+    });
+    expect(screen.getByText("indexeddb row is not a game")).toBeTruthy();
+    // Still broken: retrying must not silently drop the failure.
+    withQuietConsole(() => {
+      fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText("indexeddb row is not a game")).toBeTruthy();
+  });
+
+  it("normalises a thrown non-Error into a readable message", () => {
+    withQuietConsole(() => {
+      function ThrowsString(): React.ReactElement {
+        throw "a bare string, not an Error";
+      }
+      render(
+        <ErrorBoundary>
+          <ThrowsString />
+        </ErrorBoundary>
+      );
+    });
+    expect(screen.getByText("a bare string, not an Error")).toBeTruthy();
+  });
+
+  it("supports a custom fallback and hands it the error and a reset", () => {
+    withQuietConsole(() => {
+      render(
+        <ErrorBoundary
+          fallback={(error, reset) => (
+            <div>
+              <p>caught: {error.message}</p>
+              <button type="button" onClick={reset}>
+                retry
+              </button>
+            </div>
+          )}
+        >
+          <ControlledChild />
+        </ErrorBoundary>
+      );
+    });
+    expect(screen.getByText("caught: indexeddb row is not a game")).toBeTruthy();
+
+    shouldThrow = false;
+    withQuietConsole(() => {
+      fireEvent.click(screen.getByRole("button", { name: "retry" }));
+    });
+    expect(screen.getByText("recovered content")).toBeTruthy();
+  });
+
+  it("clears a caught error when its resetKeys change, so a new route retries", () => {
+    // One boundary for the whole case: a second `render()` would leave the
+    // first one's error card in the document and every later query would find
+    // it instead of the one under test.
+    const { rerender } = withQuietConsole(() =>
+      render(
+        <ErrorBoundary resetKeys={["game-a"]}>
+          <ControlledChild />
+        </ErrorBoundary>
+      )
+    );
+    expect(screen.getByRole("alert")).toBeTruthy();
+
+    // Same keys: the failure stands, because nothing has changed and re-running
+    // it would only fail again.
+    withQuietConsole(() => {
+      rerender(
+        <ErrorBoundary resetKeys={["game-a"]}>
+          <ControlledChild />
+        </ErrorBoundary>
+      );
+    });
+    expect(screen.getByRole("alert")).toBeTruthy();
+
+    // A new key: the boundary forgets the failure and tries again.
+    shouldThrow = false;
+    withQuietConsole(() => {
+      rerender(
+        <ErrorBoundary resetKeys={["game-b"]}>
+          <ControlledChild />
+        </ErrorBoundary>
+      );
+    });
+    expect(screen.getByText("recovered content")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("ErrorBoundary local data reset", () => {
+  let shouldThrow = true;
+  const reload = vi.fn();
+  const realLocation = window.location;
+
+  function BrokenChild(): React.ReactElement {
+    if (shouldThrow) throw new Error("corrupt row");
+    return <p>fine</p>;
+  }
+
+  beforeEach(() => {
+    shouldThrow = true;
+    reload.mockClear();
+    // jsdom's `location.reload` is not implemented and not writable, so the
+    // whole object is stood in for. The component reloads to escape a broken
+    // state, and the test must observe that without a real navigation.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { ...realLocation, reload, assign: vi.fn(), replace: vi.fn() },
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: realLocation,
+    });
+  });
+
+  function renderBroken(): void {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(
+        <ErrorBoundary>
+          <BrokenChild />
+        </ErrorBoundary>
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it("asks before deleting anything, because the action is irreversible", async () => {
+    const { getLocalDb } = await import("@/lib/db");
+    const { createGameSession } = await import("@/hooks/useGameSession");
+    const deleteDatabase = vi.spyOn(indexedDB, "deleteDatabase");
+
+    await getLocalDb().games.put(
+      createGameSession({ id: "precious", gameKind: "hex", mode: "offline_local", playerBlackToken: "t" })
+    );
+
+    renderBroken();
+    fireEvent.click(screen.getByRole("button", { name: /reset local data/i }));
+
+    // First click only arms the action. A single tap on a phone must not be
+    // able to destroy every game the player has.
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(screen.getByText(/cannot be undone/i)).toBeTruthy();
+    expect(deleteDatabase).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    // And the data is still there.
+    expect(await getLocalDb().games.get("precious")).toBeDefined();
+  });
+
+  it("disarms without deleting when the player cancels", async () => {
+    const deleteDatabase = vi.spyOn(indexedDB, "deleteDatabase");
+    renderBroken();
+
+    fireEvent.click(screen.getByRole("button", { name: /reset local data/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(deleteDatabase).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    // Back to the ordinary recovery affordance.
+    expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy();
+  });
+
+  it("re-arms from scratch on a second first click", async () => {
+    const deleteDatabase = vi.spyOn(indexedDB, "deleteDatabase");
+    renderBroken();
+
+    fireEvent.click(screen.getByRole("button", { name: /reset local data/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset local data/i }));
+
+    // Confirmation is a fresh decision, not a latch left over from the last one.
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+    expect(deleteDatabase).not.toHaveBeenCalled();
+  });
+
+  it("really deletes the stored games and reloads once confirmed", async () => {
+    const { getLocalDb } = await import("@/lib/db");
+    const { createGameSession } = await import("@/hooks/useGameSession");
+    await getLocalDb().games.put(
+      createGameSession({ id: "doomed", gameKind: "hex", mode: "offline_local", playerBlackToken: "t" })
+    );
+    expect(await getLocalDb().games.get("doomed")).toBeDefined();
+
+    renderBroken();
+    fireEvent.click(screen.getByRole("button", { name: /reset local data/i }));
+    fireEvent.click(screen.getByRole("button", { name: /yes, delete my games/i }));
+
+    // The escape hatch is the reload; the point of the button is what happened
+    // before it.
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+
+    // Checked through a fresh connection rather than the module singleton.
+    // `delete()` closes that instance, so querying it again would raise
+    // DatabaseClosedError — which is precisely why the handler reloads instead
+    // of trying to carry on in this tab.
+    const { MinimalBoardGamesDB, LOCAL_DB_NAME } = await import("@/lib/db");
+    const reopened = new MinimalBoardGamesDB(LOCAL_DB_NAME);
+    await reopened.open();
+    expect(await reopened.games.toArray()).toEqual([]);
+    await reopened.delete();
   });
 });

@@ -278,3 +278,77 @@ describe("DATA-MIG-01: the v1 -> v2 upgrade hook", () => {
     await second.delete();
   });
 });
+
+/**
+ * REL-ERR-01 — the boundary is actually wired to the right subtree.
+ *
+ * A boundary that is defined but never mounted is dead code. This makes a
+ * render-time fault happen inside the saved-games list and checks what the
+ * player is left with: the history list replaced by an error card, and every
+ * game still one click away.
+ *
+ * The fault is injected at the lookup the list performs while rendering, not
+ * at the database query. That distinction is the whole point: a boundary
+ * catches errors thrown during render, and the defect this repository was
+ * audited for was a `TypeError` thrown from inside a `.map`. A rejected
+ * promise from an async hook fails somewhere else entirely and no boundary
+ * above it can intercept that.
+ */
+describe("REL-ERR-01: the recent-sessions boundary", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doMock("@/engine/types", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/engine/types")>();
+      return {
+        ...actual,
+        // Fails only on the path the recent-sessions list takes; the grid reads
+        // `GAME_METADATA` directly, so the rest of the lobby is unaffected.
+        getGameMetadata: () => {
+          throw new Error("catalog entry is missing");
+        },
+      };
+    });
+  });
+
+  afterEach(() => {
+    vi.doUnmock("@/engine/types");
+    vi.resetModules();
+  });
+
+  it("keeps the game grid on screen when rendering the session list throws", async () => {
+    const { GAME_KINDS: KINDS, GAME_METADATA: META } = await import("@/engine/types");
+    const { GameLobby: Lobby } = await import("@/components/lobby/GameLobby");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // The prop is built from the record, not through the throwing accessor, so
+    // the failure is confined to the section under test.
+    render(<Lobby games={KINDS.map((kind) => META[kind])} initialMode="offline_local" />);
+
+    // At least one real row, so the list has something to render and actually
+    // reaches the accessor. With no rows it short-circuits to the empty state
+    // and the fault would never occur.
+    const { getLocalDb } = await import("@/lib/db");
+    const { createGameSession } = await import("@/hooks/useGameSession");
+    await getLocalDb().games.put(
+      createGameSession({
+        id: "listed-1",
+        gameKind: "checkers",
+        mode: "offline_local",
+        playerBlackToken: "t",
+      })
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Could not load recent games")).toBeTruthy();
+    });
+    expect(screen.getByText("catalog entry is missing")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeTruthy();
+
+    // A player who cannot load their history must still be able to start a
+    // game. That is the whole reason the boundary is scoped to this section
+    // rather than to the page.
+    for (const kind of KINDS) {
+      expect(screen.getByLabelText(new RegExp(`Play ${META[kind].name}`, "i"))).toBeTruthy();
+    }
+    consoleError.mockRestore();
+  });
+});

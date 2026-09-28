@@ -30,6 +30,7 @@ import { listSessionsByRecentActivity } from "@/lib/db";
 import { seatColorKey, seatTokenKey, writeSessionValue } from "@/lib/seatStorage";
 import { createId, createSeatToken, formatRelativeTime } from "@/lib/utils";
 import { Badge } from "@/components/primitives/Badge";
+import { ErrorBoundary } from "@/components/primitives/ErrorBoundary";
 import { SegmentedControl } from "@/components/primitives/SegmentedControl";
 import { NetworkIndicator } from "@/components/primitives/NetworkIndicator";
 import { useNetworkStatus } from "@/hooks/useNetworkStatus";
@@ -177,7 +178,7 @@ export function GameLobby({ games, initialMode }: GameLobbyProps): React.ReactEl
         ))}
       </ul>
 
-      <RecentSessions />
+      <RecentSessionsBoundary />
 
       <footer className="mt-8 border-t border-hairline pt-4">
         <p className="text-xs text-board-muted">
@@ -263,5 +264,22 @@ function RecentSessions(): React.ReactElement | null {
         })}
       </ul>
     </section>
+  );
+}
+
+/**
+ * The saved-games list, behind its own boundary.
+ *
+ * This section is the one part of the lobby that reads persisted rows, so it
+ * is the one part that can fail on data the player never chose — a row from a
+ * retired build, a database written by an interrupted write. Confining the
+ * boundary here means a fault in that list costs the history list and nothing
+ * else: the game grid, which is what the visitor came for, stays on screen.
+ */
+function RecentSessionsBoundary(): React.ReactElement {
+  return (
+    <ErrorBoundary fallbackTitle="Could not load recent games">
+      <RecentSessions />
+    </ErrorBoundary>
   );
 }
