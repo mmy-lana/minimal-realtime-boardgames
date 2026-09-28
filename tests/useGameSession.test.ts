@@ -450,6 +450,64 @@ describe("useGameSession on a two-step game", () => {
     expect(result.current.session?.history).toHaveLength(2);
   });
 
+  it("ends the capture chain on a crowning jump and hands the turn to the opponent", async () => {
+    // The bug: a man that jumps onto the king row is crowned, and the engine used
+    // to let the chain carry on as the new king. The player kept clicking and
+    // kept taking, the opponent never got a turn, and a piece went off the board
+    // that the rules said was still theirs.
+    //
+    // Position: a black man on a5, white men on b6 and d6. The man jumps b6 and
+    // lands on c7, crowning. As a king it could then take d6 — and must not.
+    const rows: CheckersCell[][] = Array.from({ length: 8 }, () =>
+      Array<CheckersCell>(8).fill(null)
+    );
+    rows[5]![0] = { color: "black", type: "pawn" };
+    rows[6]![1] = { color: "white", type: "pawn" };
+    rows[6]![3] = { color: "white", type: "pawn" };
+    const position: UniversalBoard = { kind: "checkers", state: rows };
+
+    const { result } = renderHook(() =>
+      useGameSession(localSession({ gameKind: "checkers", boardSnapshot: position }))
+    );
+
+    await act(async () => {
+      await result.current.makeMove({ x: 0, y: 5 });
+    });
+    const landing = { x: 2, y: 7 };
+    await act(async () => {
+      await result.current.makeMove(landing);
+    });
+
+    expect(result.current.rejection).toBeNull();
+    // The turn is over, and the piece is no longer in hand: the crown ends the
+    // move, so there is nothing to continue and the highlight has to go with it.
+    expect(result.current.session?.currentTurn).toBe("white");
+    expect(result.current.selected).toBeNull();
+    expect([...result.current.destinations]).toEqual([]);
+
+    // The capture it made is already off the board, on this ply, and the man is
+    // a king. The second white man is untouched — the move it could have made as
+    // a king was never made.
+    const after = result.current.session?.boardSnapshot;
+    if (after?.kind !== "checkers") throw new Error("expected a checkers board");
+    expect(after.state[7]![2]).toEqual({ color: "black", type: "king" });
+    expect(after.state[5]![0]).toBeNull();
+    expect(after.state[6]![1]).toBeNull();
+    expect(after.state[6]![3]).toEqual({ color: "white", type: "pawn" });
+
+    // And the opponent really can reply, so the turn passed rather than stalling.
+    // Two taps, because the first one only lifts the piece.
+    await act(async () => {
+      await result.current.makeMove({ x: 3, y: 6 });
+    });
+    await act(async () => {
+      await result.current.makeMove({ x: 2, y: 5 });
+    });
+    expect(result.current.rejection).toBeNull();
+    expect(result.current.session?.history).toHaveLength(2);
+    expect(result.current.session?.currentTurn).toBe("black");
+  });
+
   it("drops the selection on empty space rather than reporting an illegal move", async () => {
     // Clicking empty space to put a piece down is how these games are played.
     // With nothing lifted and no piece under the finger there is no move to

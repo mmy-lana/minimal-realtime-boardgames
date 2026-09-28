@@ -1095,6 +1095,105 @@ describe("checkers engine", () => {
     expect(result.canJumpAgain).toBe(false);
   });
 
+  it("ends the turn when the man crowns on a jump, even though the new king can jump", () => {
+    // Black's man at b5 jumps a white piece on a6 and lands on c7, the king row.
+    // The man is now a king, and a king on c7 has an obvious capture left: the
+    // white piece on d6 is there for it to take.
+    //
+    // The rule stops the move at the crown anyway. The bug this pins is that it
+    // did not: the chain carried on with the new king, so black took a second
+    // piece that the rules never allowed, white never received the turn, and
+    // the whole position after the crowning jump was a board no opponent had
+    // agreed to.
+    const board = emptyCheckers();
+    board[5]![0] = { color: "black", type: "pawn" };
+    board[6]![1] = { color: "white", type: "pawn" };
+    board[6]![3] = { color: "white", type: "pawn" };
+
+    const result = applyCheckersMove(
+      board,
+      { from: { x: 0, y: 5 }, to: { x: 2, y: 7 }, jumpedCoord: { x: 1, y: 6 } },
+      "black"
+    );
+
+    // It is a king, and the capture it made is off the board already.
+    expect(result.nextBoard[7]![2]).toEqual({ color: "black", type: "king" });
+    expect(result.nextBoard[6]![1]).toBeNull();
+    expect(result.nextBoard[5]![0]).toBeNull();
+    // The captured piece is gone from this ply, not at the end of the chain:
+    // there is no chain to end.
+    expect(result.nextBoard[6]![3]).toEqual({ color: "white", type: "pawn" });
+
+    // The turn is over.
+    expect(result.canJumpAgain).toBe(false);
+
+    // And the continuation really was available to the crowned king, so the
+    // assertion above is about the rule rather than about a board with nothing
+    // left to take.
+    const available = getCheckersMovesFrom(result.nextBoard, { x: 2, y: 7 }, "black");
+    expect(available).toEqual([
+      { from: { x: 2, y: 7 }, to: { x: 4, y: 5 }, jumpedCoord: { x: 3, y: 6 } },
+    ]);
+  });
+
+  it("still continues a chain that a king finishes on the king row", () => {
+    // The same geometry, played by a piece that was already a king. Crowning is
+    // a change of rank; a king that lands on the king row has not changed, and
+    // its chain continues exactly as before the crowning rule existed.
+    const board = emptyCheckers();
+    board[5]![0] = { color: "black", type: "king" };
+    board[6]![1] = { color: "white", type: "pawn" };
+    board[6]![3] = { color: "white", type: "pawn" };
+
+    const result = applyCheckersMove(
+      board,
+      { from: { x: 0, y: 5 }, to: { x: 2, y: 7 }, jumpedCoord: { x: 1, y: 6 } },
+      "black"
+    );
+
+    expect(result.nextBoard[7]![2]).toEqual({ color: "black", type: "king" });
+    expect(result.canJumpAgain).toBe(true);
+  });
+
+  it("keeps crowning a man that walks onto the king row without a capture", () => {
+    // The crowning rule itself is unchanged: a quiet move to the far row still
+    // makes a king, it simply has no chain to end.
+    const board = emptyCheckers();
+    board[6]![0] = { color: "black", type: "pawn" };
+
+    const result = applyCheckersMove(
+      board,
+      { from: { x: 0, y: 6 }, to: { x: 1, y: 7 } },
+      "black"
+    );
+
+    expect(result.nextBoard[7]![1]).toEqual({ color: "black", type: "king" });
+    expect(result.canJumpAgain).toBe(false);
+  });
+
+  it("ends white's turn on the near king row, symmetrically", () => {
+    // White crowns on row 0, and the same rule applies there. A rule that was
+    // only fixed for the side that happens to move up the board is not fixed.
+    const board = emptyCheckers();
+    board[2]![7] = { color: "white", type: "pawn" };
+    board[1]![6] = { color: "black", type: "pawn" };
+    board[1]![4] = { color: "black", type: "pawn" };
+
+    const result = applyCheckersMove(
+      board,
+      { from: { x: 7, y: 2 }, to: { x: 5, y: 0 }, jumpedCoord: { x: 6, y: 1 } },
+      "white"
+    );
+
+    expect(result.nextBoard[0]![5]).toEqual({ color: "white", type: "king" });
+    expect(result.canJumpAgain).toBe(false);
+    // A capture is available to the new king — over d3, on to c2 — and is not
+    // taken.
+    expect(getCheckersMovesFrom(result.nextBoard, { x: 5, y: 0 }, "white")).toEqual([
+      { from: { x: 5, y: 0 }, to: { x: 3, y: 2 }, jumpedCoord: { x: 4, y: 1 } },
+    ]);
+  });
+
   it("does not confuse another piece's jump for a continuation of this one", () => {
     // The forced-capture rule binds the whole turn to the piece already in
     // hand, so a second black man with a jump of its own is irrelevant: the

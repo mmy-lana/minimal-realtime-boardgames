@@ -180,9 +180,15 @@ export function applyCheckersMove(
   const nextBoard = board.map((row) => [...row]);
   setBoardCell(nextBoard, move.from.x, move.from.y, null);
 
-  let isCrowned = activePiece.type === "king";
+  // Whether the man crowned by this move, as distinct from a piece that was
+  // already a king. The distinction decides the rest of the turn: a king that
+  // lands on the king row has not changed, so its chain continues, while a man
+  // that arrives there has just been promoted and the move is over.
+  const wasKing = activePiece.type === "king";
+  let isCrowned = wasKing;
   if (player === "black" && move.to.y === CHECKERS_SIZE - 1) isCrowned = true;
   if (player === "white" && move.to.y === 0) isCrowned = true;
+  const newlyCrowned = isCrowned && !wasKing;
 
   setBoardCell(nextBoard, move.to.x, move.to.y, { color: player, type: isCrowned ? "king" : "pawn" });
 
@@ -201,7 +207,15 @@ export function applyCheckersMove(
   // to jumps that start on the landing square: any other jumping piece on the
   // board is irrelevant, because the forced-capture rule binds the whole turn
   // to the piece already in hand, not to a fresh choice of victim.
-  const furtherJumps = jumpedCoord
+  //
+  // A man that crowns on a jump is the one case where a legal continuation is
+  // not a continuation. It has just become a king, and as a king it can of
+  // course jump on — but the turn ends here, because the rule treats the crown
+  // as the end of the move rather than as a promotion in the middle of one.
+  // The bug this fixes is silent and looks like a gift: the chain carried on
+  // with the new king, taking one more piece than the rules allow, and the
+  // opponent was never given the turn that should have followed.
+  const furtherJumps = jumpedCoord && !newlyCrowned
     ? getCheckersMovesFrom(nextBoard, move.to, player).filter((option) => option.jumpedCoord !== undefined)
     : [];
 
