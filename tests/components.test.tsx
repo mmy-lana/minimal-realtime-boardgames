@@ -502,6 +502,28 @@ describe("GameOverDialog", () => {
     expect(dialogName()).toBe("Draw. The match ended in a tie.");
   });
 
+  it("names both seats in an online body, so 'was that me' is answered in text", () => {
+    // The headline names the winner. The body has to answer the other half of
+    // the question — which seat the reader held — because across a network the
+    // two players may have been looking at differently named boards, and
+    // "Defeat" alone leaves the loser to recall it.
+    const { unmount } = renderResult({ kind: "win", winner: "black" }, "online_realtime", "white");
+    const loss = document.querySelector("p")!.textContent ?? "";
+    expect(loss).toContain("Black (Player 1) has won");
+    expect(loss).toContain("You played White (Player 2)");
+    unmount();
+
+    renderResult({ kind: "win", winner: "white" }, "online_realtime", "white");
+    const win = document.querySelector("p")!.textContent ?? "";
+    expect(win).toContain("White (Player 2) has won");
+    expect(win).toContain("You played White (Player 2)");
+    // Exactly two facts: the winner and the reader's seat. A third clause that
+    // named "the seat you did not hold" would be false in the losing case,
+    // because the loser is holding it.
+    expect(win).not.toContain("did not hold");
+    cleanup();
+  });
+
   it("numbers Black as Player 1 in both modes", () => {
     // A result dialog that numbered players differently from the score cards
     // would introduce a second numbering at the exact moment a player is

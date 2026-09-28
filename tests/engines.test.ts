@@ -48,12 +48,14 @@ import {
   HEX_DIRECTIONS,
   HEX_SIZE,
 } from "@/engine/rules/hex";
+import { getSessionEngine } from "@/engine/factory";
 import type {
   CheckersBoard,
   Connect4Board,
   Coordinates,
   GomokuBoard,
   HexBoard,
+  PlayerColor,
   ReversiBoard,
   TicTacToeBoard,
 } from "@/engine/types";
@@ -850,6 +852,86 @@ describe("checkers engine", () => {
     expect(board[1]![1]).not.toBeNull();
   });
 
+  it("reports a chain that is not finished, and holds the turn for it", () => {
+    // The rule: a capture is not over because the man has landed. With a second
+    // white piece ahead, this is the first leg of a chain, and the engine has to
+    // say so — otherwise the turn passes and the player has to hand the move
+    // back to finish a jump they were never allowed to stop.
+    const board = emptyCheckers();
+    board[1]![1] = { color: "black", type: "pawn" };
+    board[2]![2] = { color: "white", type: "pawn" };
+    board[4]![4] = { color: "white", type: "pawn" };
+
+    const first = applyCheckersMove(
+      board,
+      { from: { x: 1, y: 1 }, to: { x: 3, y: 3 }, jumpedCoord: { x: 2, y: 2 } },
+      "black"
+    );
+    expect(first.canJumpAgain).toBe(true);
+    expect(first.winner).toBeNull();
+
+    // And the chain really is available, from the square the man is on now.
+    const next = getCheckersLegalMoves(first.nextBoard, "black");
+    expect(next).toEqual([{ from: { x: 3, y: 3 }, to: { x: 5, y: 5 }, jumpedCoord: { x: 4, y: 4 } }]);
+
+    const second = applyCheckersMove(
+      first.nextBoard,
+      { from: { x: 3, y: 3 }, to: { x: 5, y: 5 }, jumpedCoord: { x: 4, y: 4 } },
+      "black"
+    );
+    // The last leg: nothing left to jump, so the turn finally goes over.
+    expect(second.canJumpAgain).toBe(false);
+  });
+
+  it("ends a chain the moment the man has nowhere left to jump", () => {
+    // The same chain with the second victim missing. The man has taken one
+    // piece and the board has one white piece left with a quiet move, so this
+    // is a complete move — a flag that stayed true here would strand the player
+    // holding a piece that has nothing to do.
+    const board = emptyCheckers();
+    board[1]![1] = { color: "black", type: "pawn" };
+    board[2]![2] = { color: "white", type: "pawn" };
+    board[6]![6] = { color: "white", type: "pawn" };
+
+    const result = applyCheckersMove(
+      board,
+      { from: { x: 1, y: 1 }, to: { x: 3, y: 3 }, jumpedCoord: { x: 2, y: 2 } },
+      "black"
+    );
+    expect(result.canJumpAgain).toBe(false);
+  });
+
+  it("does not confuse another piece's jump for a continuation of this one", () => {
+    // The forced-capture rule binds the whole turn to the piece already in
+    // hand, so a second black man with a jump of its own is irrelevant: the
+    // chain continues from where the man landed or not at all.
+    const board = emptyCheckers();
+    board[1]![1] = { color: "black", type: "pawn" };
+    board[2]![2] = { color: "white", type: "pawn" };
+    // A separate black man with a jump available to it on the far side.
+    board[1]![5] = { color: "black", type: "pawn" };
+    board[2]![4] = { color: "white", type: "pawn" };
+
+    const result = applyCheckersMove(
+      board,
+      { from: { x: 1, y: 1 }, to: { x: 3, y: 3 }, jumpedCoord: { x: 2, y: 2 } },
+      "black"
+    );
+    // The other man can jump — from (1,5) over (2,4) — and the player does not
+    // have to: the chain they are in has ended.
+    expect(getCheckersLegalMoves(result.nextBoard, "black").length).toBeGreaterThan(0);
+    expect(result.canJumpAgain).toBe(false);
+  });
+
+  it("never reports a chain on a move that captured nothing", () => {
+    // `canJumpAgain` is a statement about captures. A quiet move that happens to
+    // land a man from which a jump is available next turn is a finished move.
+    const board = emptyCheckers();
+    board[1]![1] = { color: "black", type: "pawn" };
+    const result = applyCheckersMove(board, { from: { x: 1, y: 1 }, to: { x: 2, y: 2 } }, "black");
+    expect(result.canJumpAgain).toBe(false);
+  });
+
   it("removes the captured piece even when jumpedCoord is omitted", () => {
     const board = emptyCheckers();
     board[1]![1] = { color: "black", type: "pawn" };
@@ -1228,6 +1310,34 @@ describe("hex engine", () => {
     expect(applyHexMove(board, { x: 0, y: 0 }, "black").isDraw).toBe(false);
     expect(applyHexMove(board, { x: 6, y: 6 }, "black").isDraw).toBe(false);
     expect(applyHexMove(board, { x: 3, y: 3 }, "white").isDraw).toBe(false);
+  });
+
+  it("ends a played-out game with a winner, never a tie", () => {
+    // Played to the end through the engine the app actually uses, so the
+    // guarantee is on the product path and not only on the rules function: a
+    // result dialog that can be handed `{ kind: "draw" }` for Hex is a dialog
+    // showing a state the game cannot reach.
+    const engine = getSessionEngine("hex");
+    let board = engine.createInitialBoard();
+    let player: PlayerColor = "black";
+
+    for (let ply = 0; ply < HEX_SIZE * HEX_SIZE; ply += 1) {
+      const legal = engine.getLegalSquares(board, player);
+      if (legal.length === 0) break;
+      const result = engine.applyMove(board, { to: legal[ply % legal.length]! }, player);
+      expect(result.isDraw, "Hex has no draw").toBe(false);
+      board = result.board;
+      if (result.winner !== null) {
+        expect(["black", "white"]).toContain(result.winner);
+        return;
+      }
+      player = player === "black" ? "white" : "black";
+    }
+
+    // A full board with no winner would be a tie, which Hex forbids. Failing
+    // here means the board filled up without connecting anything, which is a
+    // real state the win check would have to be able to explain.
+    expect.fail("a full Hex board must resolve to a winner");
   });
 });
 

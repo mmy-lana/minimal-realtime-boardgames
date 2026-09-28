@@ -23,6 +23,14 @@
  * The frame's padding is not decoration: it is the room the board's own drop
  * shadow needs, because `overflow-hidden` would otherwise clip it flat.
  *
+ * The frame is square, with one exception. Connect Four's playfield is 7:6, and
+ * a square frame around it is a sixth of wasted height on every screen — which
+ * on a 360x640 phone is the difference between a board that fits and one that
+ * pushes the score cards off. The ratio is named per kind rather than left to
+ * the board view, because the frame has to reserve the space *before* the board
+ * is measured; a board that discovered its own ratio and reported it back would
+ * have already shifted everything below it by the time it did.
+ *
  * The cap is `min(92vw, 620px)`. The `92vw` keeps a board off the viewport edge
  * on a 360/390/430px phone; the `620px` ceiling is the desktop size. Boards may
  * still declare a smaller cap of their own (Tic-Tac-Toe is 480px by nature), but
@@ -57,6 +65,23 @@ export interface BoardStageProps {
   readonly className?: string;
 }
 
+/**
+ * The frame's aspect ratio, per kind.
+ *
+ * One entry, read in one place, so that the ratio a board draws itself at and
+ * the ratio the space was reserved for cannot drift apart. Only Connect Four
+ * departs from the square: its playfield is seven cells wide by six tall, and
+ * every other board is either a square grid or a rhombus that fits inside one.
+ */
+const STAGE_ASPECT_RATIO: Readonly<Record<GameKind, string>> = {
+  tictactoe: "1 / 1",
+  connect4: "7 / 6",
+  gomoku: "1 / 1",
+  reversi: "1 / 1",
+  checkers: "1 / 1",
+  hex: "1 / 1",
+};
+
 export function BoardStage({
   gameKind,
   size,
@@ -76,7 +101,7 @@ export function BoardStage({
         "relative mx-auto w-full max-w-[min(92vw,620px)] shrink-0 overflow-hidden p-2",
         className
       )}
-      style={{ aspectRatio: "1 / 1" }}
+      style={{ aspectRatio: STAGE_ASPECT_RATIO[gameKind] }}
     >
       {/* The canvas. Nothing here sizes anything — it only centres whatever the
           board decides to be, and it stretches to the frame so a short board

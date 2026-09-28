@@ -6,7 +6,8 @@
  * a jump is mandatory when one exists, and reaching the far rank crowns a man
  * at the end of the move. Captured pieces are removed immediately, so a
  * multi-jump sequence is expressed as consecutive plies rather than as one
- * compound move.
+ * compound move — and the engine reports `canJumpAgain` on each one, which is
+ * what holds the turn with the player who has not finished capturing yet.
  */
 
 import type { CheckersBoard, CheckersCell, Coordinates, PlayerColor } from "../types";
@@ -25,6 +26,16 @@ export interface CheckersMoveResult {
   nextBoard: CheckersBoard;
   winner: PlayerColor | null;
   isDraw: boolean;
+  /**
+   * `true` when the piece that just landed can jump again from where it now
+   * stands.
+   *
+   * A capture chain is one move, not several: the player never gets to stop
+   * halfway and the opponent never gets a turn in the middle. This flag is how
+   * the rest of the app learns that, because the only other way to express it
+   * would be to hand the turn over and take it straight back.
+   */
+  canJumpAgain: boolean;
 }
 
 export function createInitialCheckersBoard(): CheckersBoard {
@@ -185,5 +196,14 @@ export function applyCheckersMove(
   const opponentMoves = getCheckersLegalMoves(nextBoard, opponentOf(player));
   const winner: PlayerColor | null = opponentMoves.length === 0 ? player : null;
 
-  return { nextBoard, winner, isDraw: false };
+  // Whether this capture is the whole move or only its first leg. The question
+  // can only be asked of the piece that just moved, so the search is restricted
+  // to jumps that start on the landing square: any other jumping piece on the
+  // board is irrelevant, because the forced-capture rule binds the whole turn
+  // to the piece already in hand, not to a fresh choice of victim.
+  const furtherJumps = jumpedCoord
+    ? getCheckersMovesFrom(nextBoard, move.to, player).filter((option) => option.jumpedCoord !== undefined)
+    : [];
+
+  return { nextBoard, winner, isDraw: false, canJumpAgain: furtherJumps.length > 0 };
 }

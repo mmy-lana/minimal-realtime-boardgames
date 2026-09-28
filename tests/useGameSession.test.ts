@@ -3,7 +3,7 @@
  */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { PlayerColor } from "@/engine/types";
+import type { CheckersCell, PlayerColor, UniversalBoard } from "@/engine/types";
 
 /**
  * Section 4.2 — the `useGameSession` state machine.
@@ -328,6 +328,60 @@ describe("useGameSession on a two-step game", () => {
     expect(result.current.selected).toBeNull();
     expect(result.current.rejection).toBeNull();
     expect(result.current.session?.history).toHaveLength(0);
+  });
+
+  it("keeps the jumping piece selected so a capture chain can be finished", async () => {
+    // A capture is not over when the man lands. With a second victim ahead the
+    // engine holds the turn and names the square the chain continues from, and
+    // the hook keeps that piece in hand — otherwise the player is told they may
+    // jump again and given no way to do it.
+    // A hand-built position, because the opening setup has no jumps in it at
+    // all: one black man at (1,1) with white pieces at (2,2) and (4,4) ahead of
+    // it, which is a chain of exactly two jumps and no third.
+    const rows: CheckersCell[][] = Array.from({ length: 8 }, () =>
+      Array<CheckersCell>(8).fill(null)
+    );
+    rows[1]![1] = { color: "black", type: "pawn" };
+    rows[2]![2] = { color: "white", type: "pawn" };
+    rows[4]![4] = { color: "white", type: "pawn" };
+    const position: UniversalBoard = { kind: "checkers", state: rows };
+
+    const initial = localSession({ gameKind: "checkers", boardSnapshot: position });
+    const { result } = renderHook(() => useGameSession(initial));
+
+    const landing = { x: 3, y: 3 };
+    // Captured into a list rather than a reassigned `let`: TypeScript narrows a
+    // variable assigned only inside a closure to `never` at the point of use,
+    // which is the compiler being right about a pattern that does not work.
+    const outcomes: { message?: string }[] = [];
+    await act(async () => {
+      outcomes.push(await result.current.makeMove({ x: 1, y: 1 }));
+    });
+    await act(async () => {
+      outcomes.push(await result.current.makeMove(landing));
+    });
+
+    expect(result.current.rejection).toBeNull();
+    // The turn never went over, and the piece is still the one in hand.
+    expect(result.current.session?.currentTurn).toBe("black");
+    expect(result.current.selected).toEqual(landing);
+    // The one legal continuation is offered, and it is the real one.
+    expect([...result.current.destinations]).toEqual([coordKey({ x: 5, y: 5 })]);
+    // And the message says why, rather than claiming the board ran out of moves.
+    expect(outcomes[1]?.message).toBe("That piece can jump again — keep going.");
+    // The first victim is gone and the second is still standing.
+    const after = result.current.session?.boardSnapshot;
+    if (after?.kind !== "checkers") throw new Error("expected a checkers board");
+    expect(after.state[2]![2]).toBeNull();
+    expect(after.state[4]![4]).toEqual({ color: "white", type: "pawn" });
+
+    // Finishing the chain hands the turn over and clears the selection.
+    await act(async () => {
+      await result.current.makeMove({ x: 5, y: 5 });
+    });
+    expect(result.current.session?.currentTurn).toBe("white");
+    expect(result.current.selected).toBeNull();
+    expect(result.current.session?.history).toHaveLength(2);
   });
 
   it("drops the selection on empty space rather than reporting an illegal move", async () => {

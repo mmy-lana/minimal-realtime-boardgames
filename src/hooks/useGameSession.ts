@@ -430,8 +430,13 @@ export function useGameSession(
         syncState: active.mode === "online_realtime" ? "pending_upload" : "synced",
       };
 
-      setSelected(null);
-      selectedRef.current = null;
+      // A capture chain holds the turn with the mover, and the engine names the
+      // square the chain continues from. Anything else — a Reversi pass, an
+      // ordinary move — clears the selection, because there is no piece in hand
+      // to come back to.
+      const retained = outcome.retainedSelection ?? null;
+      setSelected(retained);
+      selectedRef.current = retained;
       setRejection(null);
       setRejectionMessage(null);
 
@@ -464,9 +469,16 @@ export function useGameSession(
         reason: null,
         message: terminalCue
           ? terminalMessage(resolvedWinner, cueSeat)
-          : outcome.passesTurn
-            ? "The opponent has no move left, so the turn passes back to you."
-            : `${currentEngine.formatMove(move)} — ${currentEngine.formatSquare(coord)}`,
+          : retained
+            ? // A pass and a capture chain both keep the turn, and they are not
+              // the same event: one is the opponent being unable to answer, the
+              // other is the mover being unable to stop. Conflating them tells a
+              // player with pieces still to jump that the board ran out of
+              // moves, which is the precise opposite of the situation.
+              "That piece can jump again — keep going."
+            : outcome.passesTurn
+              ? "The opponent has no move left, so the turn passes back to you."
+              : `${currentEngine.formatMove(move)} — ${currentEngine.formatSquare(coord)}`,
         ...(terminalCue ? { cue: terminalCue } : {}),
       };
     },

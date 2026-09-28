@@ -247,10 +247,36 @@ describe("board sizing", () => {
     expect(stage.style.aspectRatio).toBe("1 / 1");
   });
 
-  it("keeps a non-square board centred inside the square frame", () => {
+  it("reserves the room a non-square board needs, instead of wasting it", () => {
+    // Connect Four is 7x6. A square frame around a 7:6 board is a sixth of
+    // empty height, always — and on a 360x640 phone that sixth is the
+    // difference between the score cards fitting on screen and being pushed
+    // below the fold. The ratio is stated per kind rather than measured from
+    // the board, because the frame has to reserve the space *before* the board
+    // has been laid out; a board that reported its own ratio back would have
+    // already moved everything below it.
+    for (const [kind, ratio] of [
+      ["connect4", "7 / 6"],
+      ["tictactoe", "1 / 1"],
+      ["checkers", "1 / 1"],
+      ["hex", "1 / 1"],
+      ["reversi", "1 / 1"],
+      ["gomoku", "1 / 1"],
+    ] as const) {
+      const { container, unmount } = render(
+        <BoardStage gameKind={kind} size="md" isDesktop={false}>
+          <div />
+        </BoardStage>
+      );
+      const stage = container.querySelector("[data-board-stage]") as HTMLElement;
+      expect(stage.style.aspectRatio, `${kind} stage ratio`).toBe(ratio);
+      unmount();
+    }
+  });
+
+  it("keeps a non-square board centred inside the frame", () => {
     // Connect Four is 7x6. Forcing a square on the *board* would stretch it;
-    // forcing a square on the *frame* is fine and is what the board centres
-    // itself inside.
+    // the frame matches the board and the canvas centres whatever is left.
     const { container } = render(
       <BoardStage gameKind="connect4" size="md" isDesktop>
         <div data-testid="inner" />
@@ -500,7 +526,12 @@ describe("board sizing", () => {
 
     const board = container.querySelector('[role="grid"]') as HTMLElement;
     expect(board.style.aspectRatio).toBe("1 / 1");
-    expect(board.className).toContain("max-w-[480px]");
+    // A viewport term, not a bare pixel cap: this board used to be the only one
+    // whose width was a fixed 480px, which on a 360px phone means the outer
+    // columns run off the screen edge while the frame centres them.
+    expect(board.className).toContain("max-w-[min(92vw,560px)]");
+    // Centred inside the stage rather than pinned to the left of it.
+    expect(board.className).toContain("mx-auto");
     // The grid lines are the gap showing the frame through. This is why no tile
     // needs a border of its own.
     expect(board.className).toContain("gap-3");

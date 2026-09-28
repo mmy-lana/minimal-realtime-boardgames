@@ -101,8 +101,10 @@ export function ConnectFourBoardView({
       className={cn(
         // The frame. Matte navy, so the black discs and the white ones both
         // have something to sit against, with a darker border to lift the whole
-        // thing off the page behind it.
-        "w-full max-w-[min(92vw,640px)] rounded-2xl border-2 border-slate-900 bg-slate-800 p-2 shadow-xl"
+        // thing off the page behind it. The cap matches the other boards: the
+        // stage hands out at most 620px minus its own padding, so a larger
+        // number here would be a ceiling that could never be reached.
+        "w-full max-w-[min(92vw,560px)] rounded-2xl border-2 border-slate-900 bg-slate-800 p-2 shadow-xl"
       )}
     >
       <div

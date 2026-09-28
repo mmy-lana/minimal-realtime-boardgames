@@ -24,7 +24,15 @@
  * that is a question the result dialog exists to answer. So the local copy
  * names the seat — "Player 1 (Black) Wins!" — and the online copy names both
  * the seat and the colour, since across a network the colour is the only
- * thing the two sides are certain to agree on.
+ * thing the two sides are certain to agree on. The online body then names
+ * *both* seats again, so "who won" and "was that me" are both answered in
+ * text rather than one being left for the player to recall.
+ *
+ * **No variant of this dialog reports a draw for Hex.** Not because the copy
+ * is suppressed for that one kind, but because the Hex engine has no draw to
+ * report: every position resolves to a winner, so `isDraw` cannot be true.
+ * Branching on the kind here would be a way of hiding a bug rather than
+ * fixing it.
  *
  * Player numbers are the same in both modes: Black is always Player 1. That
  * is the mapping the score cards and the lobby already use, and a result
@@ -95,15 +103,31 @@ function headline(outcome: GameOverReason, mode: SessionMode, localSeat: PlayerC
   }
 }
 
-function body(outcome: GameOverReason, gameKind: GameKind, mode: SessionMode): string {
+function body(
+  outcome: GameOverReason,
+  gameKind: GameKind,
+  mode: SessionMode,
+  localSeat: PlayerColor
+): string {
   const name = getGameMetadata(gameKind).name;
   switch (outcome.kind) {
-    case "win":
-      // The headline carries the name; the body only confirms it, so the two
-      // together read as a fact rather than as two separate announcements.
-      return mode === "offline_local"
-        ? `${seatLabel(outcome.winner)} has won the game.`
-        : `The ${name} is complete and the result is final.`;
+    case "win": {
+      // Both the headline and the body name the winner, and the online body
+      // names *both* seats. The headline answers "who won"; the body answers
+      // "and was that me", which a headline that only names the winner leaves
+      // a player to work out from memory of the last move.
+      if (mode === "offline_local") {
+        return `${seatLabel(outcome.winner)} has won the game.`;
+      }
+      // Two facts and no third: who won, and which seat the reader held. A
+      // further clause naming "the seat you did not hold" reads as a
+      // contradiction the moment the reader is the loser, and adds nothing the
+      // two sentences above do not already say.
+      return (
+        `${COLOR_NAME[outcome.winner]} (Player ${PLAYER_NUMBER[outcome.winner]}) has won ` +
+        `the ${name}. You played ${COLOR_NAME[localSeat]} (Player ${PLAYER_NUMBER[localSeat]}).`
+      );
+    }
     case "draw":
       return mode === "offline_local"
         ? "Neither player can claim victory."
@@ -181,7 +205,9 @@ export function GameOverDialog({
       panelClassName="max-w-md"
     >
       <div className="space-y-5">
-        <p className="text-sm leading-relaxed text-board-dark/80">{body(outcome, gameKind, mode)}</p>
+        <p className="text-sm leading-relaxed text-board-dark/80">
+          {body(outcome, gameKind, mode, localSeat)}
+        </p>
 
         {isConflict && conflictDetail ? (
           <p

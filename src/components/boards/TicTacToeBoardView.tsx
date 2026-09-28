@@ -126,11 +126,14 @@ export function TicTacToeBoardView({
       role="grid"
       aria-label={label}
       aria-disabled={disabled || undefined}
-      // A square board, and 480px: tic-tac-toe is nine cells and grows past
-      // that by getting airier, not larger. A wider board just spreads the
-      // marks further apart and makes the centre — where the game is decided —
-      // harder to take in at once.
-      className="grid w-full max-w-[480px] grid-cols-3 gap-3 rounded-xl border-4 border-neutral-900 bg-neutral-900 p-3 shadow-xl"
+      // A square board, and no wider than the others: tic-tac-toe is nine cells
+      // and grows past its natural size by getting airier, not larger. The
+      // `92vw` term is what matters here — a bare `480px` was the one board that
+      // could push a cell under the screen edge on a 360px phone, because every
+      // other board had already been given a viewport term and this one had
+      // not. The centre, where the game is decided, stays in one glance because
+      // the board stops growing before it starts spreading out.
+      className="mx-auto grid w-full max-w-[min(92vw,560px)] grid-cols-3 gap-3 rounded-xl border-4 border-neutral-900 bg-neutral-900 p-3 shadow-xl"
       style={{ aspectRatio: "1 / 1" }}
     >
       {state.map((cell, index) => {

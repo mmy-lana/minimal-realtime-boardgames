@@ -100,6 +100,17 @@ export interface EngineMoveResult {
    * move's payload so a replay reproduces it.
    */
   passesTurn: boolean;
+  /**
+   * A square the mover's next move must start from, when the engine is holding
+   * the turn for a reason the session hook would otherwise have to invent.
+   *
+   * Checkers produces one: a capture that lands on a square from which another
+   * jump is available. The turn is not handed over mid-chain, so the piece has
+   * to stay selected or the player cannot continue it — and the hook has no way
+   * to know that except from here. `undefined` means "no such rule", which is
+   * the normal case and the one every other game takes.
+   */
+  retainedSelection?: Coordinates;
 }
 
 /**
@@ -309,7 +320,17 @@ const checkersEngine: SessionEngine = {
       board: { kind: "checkers", state: result.nextBoard },
       winner: result.winner,
       isDraw: result.isDraw,
-      passesTurn: false,
+      // A capture chain is one move. Handing the turn over after the first
+      // jump would let the opponent reply to a half-finished jump, which is
+      // the one thing the rule exists to prevent — so a piece that can jump
+      // again keeps it, and the payload carries the fact so a replay lands on
+      // the same player.
+      passesTurn: result.canJumpAgain,
+      // And the piece stays in hand, because "you may jump again" is not
+      // actionable on its own: the player still has to be told which piece.
+      // A finished game never retains a selection — there is nothing left to
+      // continue, and a live highlight under a game-over dialog is a lie.
+      ...(result.canJumpAgain && result.winner === null ? { retainedSelection: move.to } : {}),
     };
   },
 
