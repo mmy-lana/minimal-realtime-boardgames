@@ -1,1661 +1,1202 @@
-# Architectural Specification: Minimal Realtime Board Games
+# plan.md: angular-ngzorro-crm-workspace
 
-## Section 1: Data Schema & Pure TypeScript Interfaces
+## 0. Bootstrap, Dependencies & System Standards
 
-### 1.1 Pure TypeScript Domain Models
+### 0.1 Dependency Manifest & Scaffolding Strategy
+*   Scaffold workspace with zone change detection, SCSS styling, and no SSR:
+    `ng new angular-ngzorro-crm-workspace --routing --style=scss --ssr=false --zoneless=false` (Verify CLI flags with `ng new --help`).
+*   Install UI library non-interactively:
+    `ng add ng-zorro-antd --skip-confirmation --theme=false` (Verify schematic flags with `ng add ng-zorro-antd --help`).
+*   Install linter non-interactively:
+    `ng add angular-eslint --skip-confirmation` (fallback: `ng add @angular-eslint/schematics --skip-confirmation`).
+*   Post-scaffold file cleanup:
+    *   If scaffold emits `src/app/app.ts` with class `App`, rename it to `src/app/app.component.ts` with class `AppComponent`, and update references in `src/main.ts`. Rename `src/app/app.spec.ts` to `src/app/app.component.spec.ts` (or delete if tests are omitted).
+    *   During Phases 1 through 4, keep a simple placeholder template in `AppComponent` (`<h1>CRM Workspace Initializing...</h1>`) to prevent NG8001 compiler errors. Mount `<app-workspace-shell />` only in Phase 5.7.
+    *   Remove `src/app/app.routes.ts` if generated and unused, as application tabs are managed in-memory via `WorkspaceTabService`.
+    *   Remove auto-generated `src/app/icons-provider.ts` to prevent provider collision.
+    *   Verify `node_modules/ng-zorro-antd/ng-zorro-antd.min.css` is present in `angular.json` styles or imported in `src/styles.scss`.
+*   Direct dependencies:
+    `@angular/core`, `@angular/common`, `@angular/forms`, `@angular/router`, `@angular/animations`, `@angular/cdk`, `@angular/platform-browser`, `ng-zorro-antd`, `@ant-design/icons-angular`.
+*   HTML viewport standard:
+    `src/index.html` must declare `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">`.
+*   TypeScript path aliases in `tsconfig.json`:
+    *   `@core/*` -> `src/app/core/*`
+    *   `@shared/*` -> `src/app/shared/*`
+    *   `@features/*` -> `src/app/features/*`
+*   No barrel files (`index.ts`) permitted to eliminate cyclic dependency graphs.
+*   Linter rule configuration: In `.eslintrc.json`, configure `@typescript-eslint/no-explicit-any` as `warn` or use `unknown` with explicit type guards across all domain utilities.
+
+### 0.1.1 Engineering Standards & Definition of Done
+*   **Definition of Done per phase:** `ng build` and `ng lint` must execute without errors before starting subsequent phases.
+*   On build or lint failure, fix the code immediately within the active phase boundaries.
+*   If an internal specification conflict is detected, stop immediately and resolve the architectural definition before writing further code.
+
+### 0.2 Application Bootstrap & Providers
+`src/app/app.config.ts` must configure change detection, routing, asynchronous animations, icons, and NG-ZORRO global theme settings:
+```typescript
+import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
+import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
+import { provideNzI18n, en_US } from 'ng-zorro-antd/i18n';
+import { provideNzIcons } from 'ng-zorro-antd/icon';
+import { provideNzConfig } from 'ng-zorro-antd/core/config';
+import { IconDefinition } from '@ant-design/icons-angular';
+import {
+  DashboardOutline,
+  TeamOutline,
+  DollarOutline,
+  CalendarOutline,
+  FileTextOutline,
+  PlusOutline,
+  SearchOutline,
+  CloseOutline,
+  FilterOutline,
+  CheckCircleOutline,
+  ClockCircleOutline,
+  RightOutline,
+  MenuOutline,
+  EditOutline,
+  DeleteOutline,
+  DownOutline
+} from '@ant-design/icons-angular/icons';
+
+export const APP_ICONS: IconDefinition[] = [
+  DashboardOutline, TeamOutline, DollarOutline, CalendarOutline,
+  FileTextOutline, PlusOutline, SearchOutline, CloseOutline,
+  FilterOutline, CheckCircleOutline, ClockCircleOutline, RightOutline,
+  MenuOutline, EditOutline, DeleteOutline, DownOutline
+];
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideZoneChangeDetection({ eventCoalescing: true }),
+    provideRouter([], withComponentInputBinding()),
+    provideAnimationsAsync(),
+    provideNzI18n(en_US),
+    provideNzIcons(APP_ICONS),
+    provideNzConfig({
+      theme: {
+        primaryColor: '#0176d3'
+      }
+    })
+  ]
+};
+```
+
+---
+
+## 1. Data Schema & Pure TypeScript Interfaces
+
+### 1.1 Domain Models and Enums
+`src/app/core/models/crm.models.ts`:
 
 ```typescript
-export type GameKind =
-  | "tictactoe"
-  | "connect4"
-  | "gomoku"
-  | "reversi"
-  | "checkers"
-  | "hex";
+export type UUID = string;
+export type ISO8601Date = string;
+export type ISODateOnly = string; // Format: YYYY-MM-DD
 
-export type SessionMode = "offline_local" | "online_realtime";
-
-export type PlayerColor = "black" | "white";
-
-export type MatchStatus =
-  | "waiting"
-  | "active"
-  | "draw"
-  | "won_black"
-  | "won_white"
-  | "abandoned";
-
-export type SyncState = "synced" | "pending_upload" | "conflict";
-
-export interface Coordinates {
-  x: number;
-  y: number;
+export enum OpportunityStage {
+  PROSPECTING = 'PROSPECTING',
+  QUALIFICATION = 'QUALIFICATION',
+  NEEDS_ANALYSIS = 'NEEDS_ANALYSIS',
+  VALUE_PROPOSITION = 'VALUE_PROPOSITION',
+  DECISION_MAKERS = 'DECISION_MAKERS',
+  NEGOTIATION = 'NEGOTIATION',
+  CLOSED_WON = 'CLOSED_WON',
+  CLOSED_LOST = 'CLOSED_LOST'
 }
 
-export type TicTacToeCell = PlayerColor | null;
-export type TicTacToeBoard = TicTacToeCell[];
-
-export type Connect4Cell = PlayerColor | null;
-export type Connect4Board = Connect4Cell[][];
-
-export type GomokuCell = PlayerColor | null;
-export type GomokuBoard = GomokuCell[][];
-
-export type ReversiCell = PlayerColor | null;
-export type ReversiBoard = ReversiCell[][];
-
-export type CheckersPieceType = "pawn" | "king";
-export interface CheckersPiece {
-  color: PlayerColor;
-  type: CheckersPieceType;
-}
-export type CheckersCell = CheckersPiece | null;
-export type CheckersBoard = CheckersCell[][];
-
-// Hex is the one game of the six with no piece type: a cell holds a colour or
-// nothing at all, and the *arrangement* of those colours is the whole position.
-// A dedicated piece union would model nothing the cell does not already say.
-export type HexCell = PlayerColor | null;
-export type HexBoard = HexCell[][];
-
-export type UniversalBoard =
-  | { kind: "tictactoe"; state: TicTacToeBoard }
-  | { kind: "connect4"; state: Connect4Board }
-  | { kind: "gomoku"; state: GomokuBoard }
-  | { kind: "reversi"; state: ReversiBoard }
-  | { kind: "checkers"; state: CheckersBoard }
-  | { kind: "hex"; state: HexBoard };
-
-export interface MoveRecord {
-  id: string;
-  gameId: string;
-  ply: number;
-  player: PlayerColor;
-  from?: Coordinates;
-  to: Coordinates;
-  payload?: string;
-  timestamp: number;
+export enum ForecastCategory {
+  PIPELINE = 'PIPELINE',
+  BEST_CASE = 'BEST_CASE',
+  COMMIT = 'COMMIT',
+  CLOSED = 'CLOSED',
+  OMITTED = 'OMITTED'
 }
 
-export interface GameSession {
-  id: string;
-  gameKind: GameKind;
-  mode: SessionMode;
-  status: MatchStatus;
-  playerBlackToken: string;
-  playerWhiteToken: string | null;
-  currentTurn: PlayerColor;
-  turnNumber: number;
-  boardSnapshot: UniversalBoard;
-  history: MoveRecord[];
-  winner: PlayerColor | null;
-  /**
-   * The cells that decided the match, or `null` when there is none to point at.
-   *
-   * Reported by the move that ended the game rather than recomputed from the
-   * snapshot afterwards, because the deciding mark is the one a player wants
-   * shown and only the move knows which one that was. `null` covers three
-   * distinct cases that all mean "nothing to highlight": a game in progress, a
-   * result with no line (a resignation, a checkers disc count), and a session
-   * that has just been reset — which must forget the line it had, or it lights
-   * the winning stones on an empty opening board.
-   */
-  winningLine?: Coordinates[] | null;
-  createdAt: number;
-  updatedAt: number;
-  syncState: SyncState;
-  version: number;
+export enum ActivityType {
+  TASK = 'TASK',
+  CALL = 'CALL',
+  MEETING = 'MEETING',
+  EMAIL = 'EMAIL',
+  NOTE = 'NOTE'
 }
 
-export function extractTypedBoard<K extends GameKind>(
-  session: GameSession,
-  expectedKind: K
-): Extract<UniversalBoard, { kind: K }>["state"] {
-  if (session.boardSnapshot.kind !== expectedKind) {
-    throw new Error(
-      `Mismatched board kind: expected ${expectedKind}, received ${session.boardSnapshot.kind}`
-    );
+export enum PriorityLevel {
+  LOW = 'LOW',
+  NORMAL = 'NORMAL',
+  HIGH = 'HIGH',
+  CRITICAL = 'CRITICAL'
+}
+
+export enum ActivityStatus {
+  NOT_STARTED = 'NOT_STARTED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  DEFERRED = 'DEFERRED'
+}
+
+export enum IndustryType {
+  FINANCIAL_SERVICES = 'FINANCIAL_SERVICES',
+  HEALTHCARE = 'HEALTHCARE',
+  TECHNOLOGY = 'TECHNOLOGY',
+  MANUFACTURING = 'MANUFACTURING',
+  RETAIL = 'RETAIL',
+  ENERGY = 'ENERGY',
+  CONSULTING = 'CONSULTING'
+}
+
+export const ICON_NAMES = [
+  'dashboard',
+  'team',
+  'dollar',
+  'calendar',
+  'file-text',
+  'plus',
+  'search',
+  'close',
+  'filter',
+  'menu',
+  'edit',
+  'delete',
+  'down'
+] as const;
+
+export type SupportedIcon = typeof ICON_NAMES[number];
+
+export class ConflictError extends Error {
+  constructor(message: string = 'Version conflict encountered while updating record.') {
+    super(message);
+    this.name = 'ConflictError';
   }
-  return session.boardSnapshot.state as Extract<UniversalBoard, { kind: K }>["state"];
 }
 
-export interface SyncQueueItem {
+export class StageTransitionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StageTransitionError';
+  }
+}
+
+export interface Address {
+  street: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}
+
+export interface Account {
+  id: UUID;
+  name: string;
+  accountNumber: string;
+  industry: IndustryType;
+  annualRevenue: number;
+  phone: string;
+  website: string;
+  billingAddress: Address;
+  shippingAddress: Address;
+  ownerId: UUID;
+  ownerName: string;
+  rating: 'HOT' | 'WARM' | 'COLD';
+  version: number;
+  createdAt: ISO8601Date;
+  updatedAt: ISO8601Date;
+}
+
+export interface Contact {
+  id: UUID;
+  accountId: UUID;
+  firstName: string;
+  lastName: string;
+  title: string;
+  department: string;
+  email: string;
+  phone: string;
+  mobilePhone: string;
+  isPrimary: boolean;
+  leadSource: string;
+  version: number;
+  createdAt: ISO8601Date;
+  updatedAt: ISO8601Date;
+}
+
+export interface Opportunity {
+  id: UUID;
+  accountId: UUID;
+  primaryContactId: UUID;
+  name: string;
+  stage: OpportunityStage;
+  amount: number;
+  closeDate: ISODateOnly;
+  nextStep: string;
+  leadSource: string;
+  lossReason?: string;
+  ownerId: UUID;
+  ownerName: string;
+  version: number;
+  createdAt: ISO8601Date;
+  updatedAt: ISO8601Date;
+}
+
+export interface OpportunityView extends Opportunity {
+  probability: number;
+  expectedRevenue: number;
+  forecastCategory: ForecastCategory;
+}
+
+export interface Activity {
+  id: UUID;
+  entityType: 'ACCOUNT' | 'OPPORTUNITY' | 'CONTACT';
+  entityId: UUID;
+  type: ActivityType;
+  subject: string;
+  status: ActivityStatus;
+  priority: PriorityLevel;
+  dueDate: ISO8601Date | null;
+  completedDate: ISO8601Date | null;
+  assignedToId: UUID;
+  assignedToName: string;
+  notes: string;
+  version: number;
+  createdAt: ISO8601Date;
+  updatedAt: ISO8601Date;
+}
+
+export interface WorkspaceTab {
   id: string;
-  gameId: string;
-  action: "CREATE" | "MOVE" | "RESIGN" | "RESET";
-  payload: MoveRecord | Partial<GameSession>;
-  timestamp: number;
-  retryCount: number;
+  title: string;
+  entityType: 'ACCOUNT' | 'OPPORTUNITY' | 'LIST' | 'DASHBOARD';
+  entityId: UUID | null;
+  listKey?: 'accounts' | 'opportunities';
+  icon: SupportedIcon;
+  isDirty: boolean;
+  closable: boolean;
+  activeSubTabKey: string;
+}
+
+export interface FilterCriterion {
+  field: string;
+  operator: 'equals' | 'contains' | 'greaterThan' | 'lessThan' | 'in' | 'isEmpty' | 'isNotEmpty';
+  value?: string | number | boolean | string[] | null;
+}
+
+export interface SortCriterion {
+  field: string;
+  direction: 'asc' | 'desc';
+}
+
+export interface EntityQueryOptions {
+  pageIndex: number;
+  pageSize: number;
+  sort: SortCriterion[];
+  filters: FilterCriterion[];
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  totalCount: number;
+  pageIndex: number;
+  pageSize: number;
 }
 ```
 
-### 1.2 Local Database Schema (Dexie.js / IndexedDB)
+### 1.2 Form State & Input Models
+`src/app/core/models/crm.models.ts` (continued):
 
 ```typescript
-import Dexie, { type Table } from "dexie";
+export interface AccountFormModel {
+  name: string;
+  accountNumber: string;
+  industry: IndustryType;
+  annualRevenue: number;
+  phone: string;
+  website: string;
+  rating: 'HOT' | 'WARM' | 'COLD';
+  billingStreet: string;
+  billingCity: string;
+  billingState: string;
+  billingPostalCode: string;
+  billingCountry: string;
+}
 
-/**
- * Storage scheme version. Bumped together with a migration — either a `stores`
- * change or an `upgrade` hook to the data — and always written as an explicit
- * literal rather than derived from this constant, because a migration that
- * reads its own version number silently skips the work it was written to do.
- */
-export const LOCAL_DB_SCHEMA_VERSION = 2;
+export interface ContactFormModel {
+  accountId: UUID;
+  firstName: string;
+  lastName: string;
+  title: string;
+  department: string;
+  email: string;
+  phone: string;
+  mobilePhone: string;
+  isPrimary: boolean;
+  leadSource: string;
+}
 
-export class MinimalBoardGamesDB extends Dexie {
-  games!: Table<GameSession, string>;
-  syncQueue!: Table<SyncQueueItem, string>;
+export interface OpportunityFormModel {
+  name: string;
+  accountId: UUID;
+  primaryContactId: UUID;
+  stage: OpportunityStage;
+  amount: number;
+  closeDate: string;
+  nextStep: string;
+  leadSource: string;
+  lossReason?: string;
+}
+
+export interface ActivityFormModel {
+  entityType: 'ACCOUNT' | 'OPPORTUNITY' | 'CONTACT';
+  entityId: UUID;
+  type: ActivityType;
+  subject: string;
+  status: ActivityStatus;
+  priority: PriorityLevel;
+  dueDate: string | null;
+  assignedToName: string;
+  notes: string;
+}
+```
+
+### 1.3 Storage Injection Tokens & Keys
+`src/app/core/tokens/crm-storage.token.ts`:
+
+```typescript
+import { InjectionToken } from '@angular/core';
+
+export const CRM_STORAGE_KEYS = {
+  SCHEMA_VERSION: 'ng_crm_schema_version',
+  ACCOUNTS: 'ng_crm_accounts_v1',
+  CONTACTS: 'ng_crm_contacts_v1',
+  OPPORTUNITIES: 'ng_crm_opportunities_v1',
+  ACTIVITIES: 'ng_crm_activities_v1'
+} as const;
+
+export const WORKSPACE_SESSION_KEYS = {
+  WORKSPACE_TABS: 'ng_crm_session_tabs_v1',
+  ACTIVE_TAB_ID: 'ng_crm_session_active_tab_v1'
+} as const;
+
+export const LOCAL_STORAGE = new InjectionToken<Storage | null>('LOCAL_STORAGE', {
+  providedIn: 'root',
+  factory: () => {
+    try {
+      return typeof window !== 'undefined' ? window.localStorage : null;
+    } catch {
+      return null;
+    }
+  }
+});
+
+export const SESSION_STORAGE = new InjectionToken<Storage | null>('SESSION_STORAGE', {
+  providedIn: 'root',
+  factory: () => {
+    try {
+      return typeof window !== 'undefined' ? window.sessionStorage : null;
+    } catch {
+      return null;
+    }
+  }
+});
+```
+
+---
+
+## 2. Component Architecture
+
+```
+src/app/
++-- core/
+|   +-- models/
+|   |   +-- crm.models.ts
+|   +-- tokens/
+|   |   +-- crm-storage.token.ts
+|   +-- utils/
+|   |   +-- uuid.ts
+|   |   +-- pipeline-calc.ts
+|   |   +-- filter-evaluator.ts
+|   +-- fixtures/
+|   |   +-- mock-crm-data.ts
+|   +-- services/
+|       +-- viewport.service.ts
+|       +-- keyboard-shortcut.service.ts
+|       +-- crm-storage.service.ts
+|       +-- crm-repository.service.ts
+|       +-- workspace-tab.service.ts
++-- shared/
+|   +-- ui/
+|   |   +-- compact-badge/
+|   |   |   +-- compact-badge.component.ts
+|   |   +-- metric-chip/
+|   |   |   +-- metric-chip.component.ts
+|   |   +-- stage-path/
+|   |   |   +-- stage-path.component.ts
+|   |   |   +-- stage-path.component.scss
+|   |   +-- record-banner/
+|   |   |   +-- record-banner.component.ts
+|   |   |   +-- record-banner.component.scss
+|   |   +-- related-entity-card/
+|   |   |   +-- related-entity-card.component.ts
+|   |   |   +-- related-entity-card.component.scss
+|   |   +-- quick-create-drawer/
+|   |   |   +-- quick-create-drawer.component.ts
+|   |   |   +-- quick-create-drawer.component.scss
+|   |   +-- dense-table-toolbar/
+|   |   |   +-- dense-table-toolbar.component.ts
+|   |   +-- activity-timeline/
+|   |       +-- activity-timeline.component.ts
+|   |       +-- activity-timeline.component.scss
+|   +-- pipes/
+|       +-- currency-formatter.pipe.ts
+|       +-- stage-color.pipe.ts
++-- features/
+|   +-- workspace/
+|   |   +-- workspace-shell.component.ts
+|   |   +-- workspace-shell.component.scss
+|   |   +-- pipeline-dashboard/
+|   |   |   +-- pipeline-dashboard.component.ts
+|   |   |   +-- pipeline-dashboard.component.scss
+|   |   +-- components/
+|   |       +-- console-tab-bar/
+|   |       |   +-- console-tab-bar.component.ts
+|   |       |   +-- console-tab-bar.component.scss
+|   |       +-- utility-bar/
+|   |           +-- utility-bar.component.ts
+|   +-- accounts/
+|   |   +-- account-list/
+|   |   |   +-- account-list.component.ts
+|   |   +-- account-detail/
+|   |       +-- account-detail.component.ts
+|   |       +-- account-detail.component.scss
+|   +-- opportunities/
+|   |   +-- components/
+|   |   |   +-- loss-reason-modal/
+|   |   |       +-- loss-reason-modal.component.ts
+|   |   +-- opportunity-list/
+|   |   |   +-- opportunity-list.component.ts
+|   |   +-- opportunity-detail/
+|   |       +-- opportunity-detail.component.ts
+|   |       +-- opportunity-detail.component.scss
+|   +-- activities/
+|       +-- activity-composer/
+|           +-- activity-composer.component.ts
++-- styles/
+    +-- _density-overrides.scss
+    +-- _theme-variables.scss
+```
+
+### 2.0 Symbol-to-File Matrix
+| Symbol / Artifact | Canonical File Path | Exports |
+| :--- | :--- | :--- |
+| Enums, Interfaces, Tab Models | `src/app/core/models/crm.models.ts` | `UUID`, `ISO8601Date`, `ISODateOnly`, `OpportunityStage`, `ForecastCategory`, `ActivityType`, `PriorityLevel`, `ActivityStatus`, `IndustryType`, `Address`, `Account`, `Contact`, `Opportunity`, `OpportunityView`, `Activity`, `WorkspaceTab`, `ICON_NAMES`, `SupportedIcon`, `ConflictError`, `StageTransitionError`, `FilterCriterion`, `SortCriterion`, `EntityQueryOptions`, `PaginatedResult`, `AccountFormModel`, `ContactFormModel`, `OpportunityFormModel`, `ActivityFormModel` |
+| Storage Injection Tokens & Keys | `src/app/core/tokens/crm-storage.token.ts` | `CRM_STORAGE_KEYS`, `WORKSPACE_SESSION_KEYS`, `LOCAL_STORAGE`, `SESSION_STORAGE` |
+| Resilient ID Generator | `src/app/core/utils/uuid.ts` | `generateId` |
+| Responsive Viewport Service | `src/app/core/services/viewport.service.ts` | `ViewportService` |
+| Global Keyboard Shortcuts | `src/app/core/services/keyboard-shortcut.service.ts` | `KeyboardShortcutService` |
+| Storage Engine with Fallback | `src/app/core/services/crm-storage.service.ts` | `CrmStorageService` |
+| Financial & Stage Functions | `src/app/core/utils/pipeline-calc.ts` | `STAGE_CONFIG`, `calculateExpectedRevenue`, `deriveForecastCategory`, `validateStageTransition`, `applyStageTransition`, `toLocalDateOnly`, `calculateWinRate`, `calculateWeightedForecast` |
+| Filter & Sorter Engine | `src/app/core/utils/filter-evaluator.ts` | `evaluateCriteria` |
+| Seed Dataset | `src/app/core/fixtures/mock-crm-data.ts` | `SEED_ACCOUNTS`, `SEED_CONTACTS`, `SEED_OPPORTUNITIES`, `SEED_ACTIVITIES` |
+| Tab State Manager | `src/app/core/services/workspace-tab.service.ts` | `WorkspaceTabService` |
+| Reactive CRM Entity Store | `src/app/core/services/crm-repository.service.ts` | `CrmRepositoryService` |
+| Currency Formatter Pipe | `src/app/shared/pipes/currency-formatter.pipe.ts` | `CurrencyFormatterPipe` |
+| Stage Color Pipe | `src/app/shared/pipes/stage-color.pipe.ts` | `StageColorPipe` |
+| Root Application Component | `src/app/app.component.ts` | `AppComponent` |
+| Workspace Shell Component | `src/app/features/workspace/workspace-shell.component.ts` | `WorkspaceShellComponent` |
+| Pipeline Dashboard Component | `src/app/features/workspace/pipeline-dashboard/pipeline-dashboard.component.ts` | `PipelineDashboardComponent` |
+| Quick Create Drawer | `src/app/shared/ui/quick-create-drawer/quick-create-drawer.component.ts` | `QuickCreateDrawerComponent` |
+| Loss Reason Modal | `src/app/features/opportunities/components/loss-reason-modal/loss-reason-modal.component.ts` | `LossReasonModalComponent` |
+
+### 2.4 Component API Contracts
+
+#### 2.4.1 Shared UI Primitives & Molecules
+| Component Class | Selector | Input Signals (`input()`) | Output Signals (`output()`) |
+| :--- | :--- | :--- | :--- |
+| `StagePathComponent` | `app-stage-path` | `currentStage: OpportunityStage`, `readOnly: boolean` | `stageChange: OutputEmitterRef<OpportunityStage>` |
+| `RecordBannerComponent` | `app-record-banner` | `title: string`, `icon: SupportedIcon`, `metrics: { label: string; value: string }[]` | `editClick: OutputEmitterRef<void>`, `deleteClick: OutputEmitterRef<void>` |
+| `MetricChipComponent` | `app-metric-chip` | `label: string`, `value: string \| number` | None |
+| `CompactBadgeComponent` | `app-compact-badge` | `status: string`, `colorType: 'success' \| 'warning' \| 'error' \| 'default'` | None |
+| `ActivityTimelineComponent` | `app-activity-timeline` | `activities: Activity[]` | `statusToggle: OutputEmitterRef<{ id: UUID; completed: boolean }>` |
+| `RelatedEntityCardComponent` | `app-related-entity-card` | `title: string`, `count: number`, `columns: { key: string; label: string }[]`, `data: unknown[]` | `addClick: OutputEmitterRef<void>`, `rowClick: OutputEmitterRef<UUID>` |
+| `QuickCreateDrawerComponent` | `app-quick-create-drawer` | `visible: boolean`, `mode: 'create' \| 'edit'`, `entityType: 'ACCOUNT' \| 'CONTACT' \| 'OPPORTUNITY' \| 'ACTIVITY'`, `recordId: UUID \| null`, `contextId: UUID \| null`, `contextType: 'ACCOUNT' \| 'OPPORTUNITY' \| 'CONTACT' \| null` | `closed: OutputEmitterRef<void>`, `created: OutputEmitterRef<void>` |
+| `ConsoleTabBarComponent` | `app-console-tab-bar` | `tabs: WorkspaceTab[]`, `activeTabId: string` | `tabSelect: OutputEmitterRef<string>`, `tabClose: OutputEmitterRef<string>` |
+| `UtilityBarComponent` | `app-utility-bar` | `activeTabId: string`, `entityCount: number` | `quickActionClick: OutputEmitterRef<'NEW_ACCOUNT' \| 'NEW_TASK' \| 'SEARCH'>` |
+| `LossReasonModalComponent` | `app-loss-reason-modal` | `visible: boolean` | `confirmed: OutputEmitterRef<string>`, `cancelled: OutputEmitterRef<void>` |
+| `DenseTableToolbarComponent` | `app-dense-table-toolbar` | `searchPlaceholder: string`, `filterActive: boolean` | `searchChange: OutputEmitterRef<string>`, `filterToggle: OutputEmitterRef<void>`, `newClick: OutputEmitterRef<void>`, `densityChange: OutputEmitterRef<'compact' \| 'normal'>`, `columnsChange: OutputEmitterRef<string[]>` |
+| `ActivityComposerComponent` | `app-activity-composer` | `entityType: 'ACCOUNT' \| 'OPPORTUNITY' \| 'CONTACT'`, `entityId: UUID` | `activityAdded: OutputEmitterRef<void>` |
+
+#### 2.4.2 Feature View Contracts & Shell Dynamic Registry
+*   **Tab Identification Convention:** Built via `WorkspaceTabService.tabIdFor(entityType, entityIdOrListKey)`. Generated string: `${entityType}:${entityIdOrListKey}`. Contacts do not hold independent tabs; clicking a contact resolves parent account tab `ACCOUNT:${contact.accountId}` with `activeSubTabKey: 'contacts'`.
+*   **Feature View Inputs:**
+    *   `AccountDetailComponent`: `entityId: InputSignal<UUID>`
+    *   `OpportunityDetailComponent`: `entityId: InputSignal<UUID>`
+    *   `AccountListComponent`: None
+    *   `OpportunityListComponent`: None
+    *   `PipelineDashboardComponent`: None
+*   **Keep-Alive Dynamic Shell Rendering:** To prevent NG0100 change detection expressions and preserve form states during tab switching, `WorkspaceShellComponent` renders all open tabs simultaneously, toggling visibility via `[hidden]`:
+    ```html
+    @for (tab of tabs(); track tab.id) {
+      <div class="workspace-pane" [hidden]="tab.id !== activeTabId()">
+        <ng-container
+          *ngComponentOutlet="
+            resolveComponent(tab);
+            inputs: resolveInputs(tab)
+          "
+        />
+      </div>
+    }
+    ```
+    ```typescript
+    protected resolveComponent(tab: WorkspaceTab): Type<unknown> {
+      switch (tab.entityType) {
+        case 'ACCOUNT': return AccountDetailComponent;
+        case 'OPPORTUNITY': return OpportunityDetailComponent;
+        case 'LIST': return tab.listKey === 'opportunities' ? OpportunityListComponent : AccountListComponent;
+        case 'DASHBOARD': return PipelineDashboardComponent;
+      }
+    }
+
+    protected resolveInputs(tab: WorkspaceTab): Record<string, unknown> {
+      if (tab.entityType === 'ACCOUNT' || tab.entityType === 'OPPORTUNITY') {
+        return { entityId: tab.entityId };
+      }
+      return {};
+    }
+    ```
+*   **Form Dirty State & Shortcut Isolation:**
+    *   Detail components monitor their local reactive `FormGroup.dirty` state and call `this.tabService.setTabDirty(this.myTabId, isDirty)`.
+    *   `KeyboardShortcutService.saveRequested$` is evaluated by detail components only if `this.tabService.activeTabId() === this.myTabId`.
+    *   `WorkspaceShellComponent` handles `KeyboardShortcutService.tabCloseRequested$` by directly closing `activeTabId()`.
+*   **Delete Handling Contract:** Detail components intercept `RecordBannerComponent.deleteClick`, show confirmation through `NzModalService.confirm`, invoke the repository deletion cascade, and execute `WorkspaceTabService.closeTab(myTabId)`.
+
+---
+
+## 3. Core Feature Logic
+
+### 3.1 Pipeline Calculations & Date Handling
+`src/app/core/utils/pipeline-calc.ts`:
+
+```typescript
+import { OpportunityStage, ForecastCategory, Opportunity, ISODateOnly } from '@core/models/crm.models';
+
+export interface StageMetadata {
+  probability: number;
+  label: string;
+  order: number;
+  closed: boolean;
+  forecastCategory: ForecastCategory;
+}
+
+export const STAGE_CONFIG: Record<OpportunityStage, StageMetadata> = {
+  [OpportunityStage.PROSPECTING]: { probability: 10, label: 'Prospecting', order: 1, closed: false, forecastCategory: ForecastCategory.PIPELINE },
+  [OpportunityStage.QUALIFICATION]: { probability: 20, label: 'Qualification', order: 2, closed: false, forecastCategory: ForecastCategory.PIPELINE },
+  [OpportunityStage.NEEDS_ANALYSIS]: { probability: 40, label: 'Needs Analysis', order: 3, closed: false, forecastCategory: ForecastCategory.PIPELINE },
+  [OpportunityStage.VALUE_PROPOSITION]: { probability: 60, label: 'Value Proposition', order: 4, closed: false, forecastCategory: ForecastCategory.BEST_CASE },
+  [OpportunityStage.DECISION_MAKERS]: { probability: 75, label: 'Decision Makers', order: 5, closed: false, forecastCategory: ForecastCategory.BEST_CASE },
+  [OpportunityStage.NEGOTIATION]: { probability: 90, label: 'Negotiation/Review', order: 6, closed: false, forecastCategory: ForecastCategory.COMMIT },
+  [OpportunityStage.CLOSED_WON]: { probability: 100, label: 'Closed Won', order: 7, closed: true, forecastCategory: ForecastCategory.CLOSED },
+  [OpportunityStage.CLOSED_LOST]: { probability: 0, label: 'Closed Lost', order: 8, closed: true, forecastCategory: ForecastCategory.OMITTED }
+};
+
+export function toLocalDateOnly(d: Date = new Date()): ISODateOnly {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function deriveForecastCategory(stage: OpportunityStage): ForecastCategory {
+  return STAGE_CONFIG[stage].forecastCategory;
+}
+
+export function calculateExpectedRevenue(amount: number, stage: OpportunityStage): number {
+  const prob = STAGE_CONFIG[stage].probability;
+  return Math.round((amount * prob) / 100);
+}
+
+export function validateStageTransition(
+  currentStage: OpportunityStage,
+  targetStage: OpportunityStage,
+  lossReason?: string
+): { valid: boolean; reason?: string } {
+  if (currentStage === targetStage) return { valid: true };
+  if (targetStage === OpportunityStage.CLOSED_LOST && (!lossReason || lossReason.trim().length === 0)) {
+    return { valid: false, reason: 'Loss reason is mandatory when marking Closed Lost.' };
+  }
+  return { valid: true };
+}
+
+export function applyStageTransition(
+  opportunity: Opportunity,
+  targetStage: OpportunityStage,
+  todayDate: ISODateOnly,
+  lossReason?: string
+): Partial<Opportunity> {
+  const patch: Partial<Opportunity> = {
+    stage: targetStage
+  };
+
+  if (targetStage === OpportunityStage.CLOSED_LOST) {
+    patch.lossReason = lossReason?.trim();
+  } else {
+    patch.lossReason = undefined;
+  }
+
+  const isTargetTerminal = targetStage === OpportunityStage.CLOSED_WON || targetStage === OpportunityStage.CLOSED_LOST;
+  const isCurrentTerminal = opportunity.stage === OpportunityStage.CLOSED_WON || opportunity.stage === OpportunityStage.CLOSED_LOST;
+
+  if (isTargetTerminal && (!opportunity.closeDate || opportunity.closeDate > todayDate)) {
+    patch.closeDate = todayDate;
+  } else if (isCurrentTerminal && !isTargetTerminal && opportunity.closeDate < todayDate) {
+    patch.closeDate = todayDate;
+  }
+
+  return patch;
+}
+
+export function calculateWinRate(opportunities: Opportunity[]): number {
+  const wonCount = opportunities.filter(o => o.stage === OpportunityStage.CLOSED_WON).length;
+  const lostCount = opportunities.filter(o => o.stage === OpportunityStage.CLOSED_LOST).length;
+  const totalClosed = wonCount + lostCount;
+  return totalClosed === 0 ? 0 : Math.round((wonCount / totalClosed) * 100);
+}
+
+export function calculateWeightedForecast(opportunities: Opportunity[]): number {
+  return opportunities
+    .filter(o => o.stage !== OpportunityStage.CLOSED_WON && o.stage !== OpportunityStage.CLOSED_LOST)
+    .reduce((sum, o) => sum + calculateExpectedRevenue(o.amount, o.stage), 0);
+}
+```
+
+### 3.2 Resilient UUID Generator
+`src/app/core/utils/uuid.ts`:
+
+```typescript
+export function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, c =>
+      (+c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))).toString(16)
+    );
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+```
+
+### 3.3 Workspace Multi-Tab Service
+`src/app/core/services/workspace-tab.service.ts`:
+
+```typescript
+import { Injectable, signal, computed, inject } from '@angular/core';
+import { NzModalService } from 'ng-zorro-antd/modal';
+import { WorkspaceTab, UUID, ICON_NAMES } from '@core/models/crm.models';
+import { WORKSPACE_SESSION_KEYS, SESSION_STORAGE } from '@core/tokens/crm-storage.token';
+
+@Injectable({ providedIn: 'root' })
+export class WorkspaceTabService {
+  private readonly store = inject(SESSION_STORAGE);
+  private readonly modalService = inject(NzModalService);
+  private isModalOpen = false;
+
+  public static tabIdFor(entityType: WorkspaceTab['entityType'], key: string): string {
+    return `${entityType}:${key}`;
+  }
+
+  private readonly defaultTab: WorkspaceTab = {
+    id: WorkspaceTabService.tabIdFor('DASHBOARD', 'overview'),
+    title: 'Executive Pipeline',
+    entityType: 'DASHBOARD',
+    entityId: null,
+    icon: 'dashboard',
+    isDirty: false,
+    closable: false,
+    activeSubTabKey: 'overview'
+  };
+
+  private tabsSignal = signal<WorkspaceTab[]>([this.defaultTab]);
+  private activeTabIdSignal = signal<string>(WorkspaceTabService.tabIdFor('DASHBOARD', 'overview'));
+
+  public readonly tabs = this.tabsSignal.asReadonly();
+  public readonly activeTabId = this.activeTabIdSignal.asReadonly();
+  public readonly activeTab = computed(() => {
+    return this.tabsSignal().find(t => t.id === this.activeTabIdSignal()) || this.tabsSignal()[0];
+  });
 
   constructor() {
-    super("minimal_board_games_db");
+    this.hydrateSession();
+  }
 
-    // v1 — the original schema, kept verbatim. Dexie needs the full history of
-    // version declarations to open a database written by an older build, so
-    // this block may never be edited or removed.
-    this.version(1).stores({
-      games: "id, gameKind, mode, status, updatedAt, syncState",
-      syncQueue: "id, gameId, timestamp, retryCount",
-    });
+  public openTab(tab: Omit<WorkspaceTab, 'isDirty'>): void {
+    const existing = this.tabsSignal().find(t => t.id === tab.id);
+    if (existing) {
+      if (tab.activeSubTabKey && existing.activeSubTabKey !== tab.activeSubTabKey) {
+        this.updateSubTab(existing.id, tab.activeSubTabKey);
+      }
+      this.activeTabIdSignal.set(existing.id);
+    } else {
+      const newTab: WorkspaceTab = { ...tab, isDirty: false };
+      this.tabsSignal.update(tabs => [...tabs, newTab]);
+      this.activeTabIdSignal.set(newTab.id);
+    }
+    this.persist();
+  }
 
-    // v2 — same stores, plus a data migration. The `chess` -> `hex` rename left
-    // rows behind whose `gameKind` is no longer in the catalog, and those rows
-    // were not merely stale: rendering one dereferenced a missing metadata
-    // entry and threw, which unmounted the whole page. Pruning at upgrade time
-    // removes the cause rather than making every reader survive it.
-    this.version(2)
-      .stores({
-        games: "id, gameKind, mode, status, updatedAt, syncState",
-        syncQueue: "id, gameId, timestamp, retryCount",
+  public async closeTab(tabId: string): Promise<boolean> {
+    const target = this.tabsSignal().find(t => t.id === tabId);
+    if (!target || !target.closable) return false;
+
+    if (target.isDirty) {
+      if (this.isModalOpen) return false;
+      const confirmed = await this.confirmDiscardModal();
+      if (!confirmed) return false;
+    }
+
+    const currentTabs = this.tabsSignal();
+    const targetIndex = currentTabs.findIndex(t => t.id === tabId);
+    const updatedTabs = currentTabs.filter(t => t.id !== tabId);
+
+    this.tabsSignal.set(updatedTabs);
+    if (this.activeTabIdSignal() === tabId) {
+      const nextIndex = Math.max(0, targetIndex - 1);
+      this.activeTabIdSignal.set(updatedTabs[nextIndex].id);
+    }
+
+    this.persist();
+    return true;
+  }
+
+  public setTabDirty(tabId: string, isDirty: boolean): void {
+    this.tabsSignal.update(tabs =>
+      tabs.map(t => (t.id === tabId ? { ...t, isDirty } : t))
+    );
+  }
+
+  public updateSubTab(tabId: string, subTabKey: string): void {
+    this.tabsSignal.update(tabs =>
+      tabs.map(t => (t.id === tabId ? { ...t, activeSubTabKey: subTabKey } : t))
+    );
+    this.persist();
+  }
+
+  public pruneMissingEntities(validEntityIds: Set<UUID>): void {
+    this.tabsSignal.update(tabs =>
+      tabs.filter(t => {
+        if (!t.entityId) return true;
+        return validEntityIds.has(t.entityId);
       })
-      .upgrade(async (tx) => {
-        const games = tx.table<GameSession, string>("games");
-        const syncQueue = tx.table<SyncQueueItem, string>("syncQueue");
+    );
+    if (!this.tabsSignal().some(t => t.id === this.activeTabIdSignal())) {
+      this.activeTabIdSignal.set(this.tabsSignal()[0].id);
+    }
+    this.persist();
+  }
 
-        // 1. Drop sessions whose kind this build cannot play. `game?.gameKind`
-        //    rather than `game.gameKind`: the declared row type is an
-        //    assumption, and a database written by a build that crashed
-        //    mid-write can hold something that is not an object at all.
-        const staleGameKeys = await games
-          .toCollection()
-          .filter((game) => !isGameKind(game?.gameKind))
-          .primaryKeys();
-        if (staleGameKeys.length > 0) await games.bulkDelete(staleGameKeys);
+  private confirmDiscardModal(): Promise<boolean> {
+    this.isModalOpen = true;
+    return new Promise(resolve => {
+      let resolved = false;
+      const safeResolve = (val: boolean) => {
+        if (!resolved) {
+          resolved = true;
+          this.isModalOpen = false;
+          resolve(val);
+        }
+      };
 
-        // 2. Drop queued writes that no longer belong to a live session.
-        //    Resolved through `gameId` rather than by inspecting the payload:
-        //    a MoveRecord carries no `gameKind` field at all, so testing the
-        //    payload would classify every pending move as stale and silently
-        //    discard real, unsent, perfectly good moves.
-        const liveGameIds = new Set(await games.toCollection().primaryKeys());
-        const orphanedQueueKeys = await syncQueue
-          .toCollection()
-          .filter((item) => !liveGameIds.has(item?.gameId))
-          .primaryKeys();
-        if (orphanedQueueKeys.length > 0) await syncQueue.bulkDelete(orphanedQueueKeys);
+      const ref = this.modalService.confirm({
+        nzTitle: 'Unsaved Changes Detected',
+        nzContent: 'Closing this tab will discard modifications. Continue?',
+        nzOkText: 'Discard & Close',
+        nzOkDanger: true,
+        nzOnOk: () => safeResolve(true),
+        nzCancelText: 'Keep Editing',
+        nzOnCancel: () => safeResolve(false)
+      });
+
+      ref.afterClose.subscribe(() => safeResolve(false));
+    });
+  }
+
+  private persist(): void {
+    if (!this.store) return;
+    try {
+      const cleanTabs = this.tabsSignal().map(t => ({ ...t, isDirty: false }));
+      this.store.setItem(WORKSPACE_SESSION_KEYS.WORKSPACE_TABS, JSON.stringify(cleanTabs));
+      this.store.setItem(WORKSPACE_SESSION_KEYS.ACTIVE_TAB_ID, this.activeTabIdSignal());
+    } catch {
+      // Storage unavailable or quota exceeded
+    }
+  }
+
+  private hydrateSession(): void {
+    if (!this.store) return;
+    try {
+      const raw = this.store.getItem(WORKSPACE_SESSION_KEYS.WORKSPACE_TABS);
+      const activeId = this.store.getItem(WORKSPACE_SESSION_KEYS.ACTIVE_TAB_ID);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const allowedTypes = new Set(['ACCOUNT', 'OPPORTUNITY', 'LIST', 'DASHBOARD']);
+          const allowedIcons = new Set(ICON_NAMES);
+
+          const sanitized: WorkspaceTab[] = parsed
+            .filter((t: unknown): t is WorkspaceTab => {
+              if (!t || typeof t !== 'object') return false;
+              const tab = t as WorkspaceTab;
+              return allowedTypes.has(tab.entityType) && allowedIcons.has(tab.icon) && typeof tab.id === 'string';
+            })
+            .map(t => ({ ...t, isDirty: false }));
+
+          if (!sanitized.some(t => t.id === this.defaultTab.id)) {
+            sanitized.unshift(this.defaultTab);
+          }
+
+          this.tabsSignal.set(sanitized);
+          if (activeId && sanitized.some(t => t.id === activeId)) {
+            this.activeTabIdSignal.set(activeId);
+            return;
+          }
+        }
+      }
+    } catch {
+      this.tabsSignal.set([this.defaultTab]);
+    }
+  }
+}
+```
+
+### 3.4 Multi-Criteria Filter & Sort Evaluator
+`src/app/core/utils/filter-evaluator.ts`:
+
+```typescript
+import { FilterCriterion, SortCriterion } from '@core/models/crm.models';
+
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}/;
+
+function getNestedValue(obj: unknown, path: string): unknown {
+  if (!obj || typeof obj !== 'object') return undefined;
+  return path.split('.').reduce((acc: unknown, part: string) => {
+    if (acc != null && typeof acc === 'object') {
+      return (acc as Record<string, unknown>)[part];
+    }
+    return undefined;
+  }, obj);
+}
+
+function parseFilterComparable(val: unknown): number | string {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    if (ISO_DATE_PATTERN.test(val)) {
+      const parsed = Date.parse(val);
+      if (!isNaN(parsed)) return parsed;
+    }
+    const num = Number(val);
+    if (!isNaN(num) && val.trim() !== '') return num;
+    return val.toLowerCase();
+  }
+  return String(val ?? '').toLowerCase();
+}
+
+function parseSortComparable(val: unknown): number | string {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string' && ISO_DATE_PATTERN.test(val)) {
+    const parsed = Date.parse(val);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return String(val ?? '').toLowerCase();
+}
+
+export function evaluateCriteria<T extends Record<string, unknown>>(
+  items: T[],
+  filters: FilterCriterion[],
+  sorts: SortCriterion[]
+): T[] {
+  let result = items.filter(item => {
+    return filters.every(crit => {
+      const val = getNestedValue(item, crit.field);
+      const isValEmpty = val === undefined || val === null || val === '';
+
+      if (crit.operator === 'isEmpty') return isValEmpty;
+      if (crit.operator === 'isNotEmpty') return !isValEmpty;
+
+      if (isValEmpty) {
+        return crit.operator === 'equals' && (crit.value === null || crit.value === '');
+      }
+
+      switch (crit.operator) {
+        case 'equals':
+          return String(val).toLowerCase() === String(crit.value).toLowerCase();
+        case 'contains':
+          return String(val).toLowerCase().includes(String(crit.value).toLowerCase());
+        case 'greaterThan': {
+          const compA = parseFilterComparable(val);
+          const compB = parseFilterComparable(crit.value);
+          if (typeof compA === 'number' && typeof compB === 'number') return compA > compB;
+          return String(compA) > String(compB);
+        }
+        case 'lessThan': {
+          const compA = parseFilterComparable(val);
+          const compB = parseFilterComparable(crit.value);
+          if (typeof compA === 'number' && typeof compB === 'number') return compA < compB;
+          return String(compA) < String(compB);
+        }
+        case 'in':
+          if (Array.isArray(crit.value)) {
+            return crit.value.map(v => String(v).toLowerCase()).includes(String(val).toLowerCase());
+          }
+          return false;
+        default:
+          return true;
+      }
+    });
+  });
+
+  if (sorts.length > 0) {
+    result = [...result].sort((a, b) => {
+      for (const sort of sorts) {
+        const fieldA = getNestedValue(a, sort.field);
+        const fieldB = getNestedValue(b, sort.field);
+        if (fieldA === fieldB) continue;
+
+        const modifier = sort.direction === 'asc' ? 1 : -1;
+        const aNil = fieldA == null;
+        const bNil = fieldB == null;
+
+        if (aNil && bNil) continue;
+        if (aNil) return 1 * modifier;
+        if (bNil) return -1 * modifier;
+
+        const compA = parseSortComparable(fieldA);
+        const compB = parseSortComparable(fieldB);
+
+        const cmp = typeof compA === 'number' && typeof compB === 'number'
+          ? compA - compB
+          : String(compA).localeCompare(String(compB), undefined, { numeric: true });
+
+        if (cmp !== 0) {
+          return cmp * modifier;
+        }
+      }
+      return 0;
+    });
+  }
+
+  return result;
+}
+```
+
+### 3.5 Global Keyboard Shortcut Service
+`src/app/core/services/keyboard-shortcut.service.ts`:
+
+```typescript
+import { Injectable, inject, DestroyRef } from '@angular/core';
+import { fromEvent, Subject } from 'rxjs';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+
+@Injectable({ providedIn: 'root' })
+export class KeyboardShortcutService {
+  private readonly destroyRef = inject(DestroyRef);
+
+  private readonly saveSubject = new Subject<void>();
+  private readonly searchSubject = new Subject<void>();
+  private readonly tabCloseSubject = new Subject<void>();
+
+  public readonly saveRequested$ = this.saveSubject.asObservable();
+  public readonly searchFocusRequested$ = this.searchSubject.asObservable();
+  public readonly tabCloseRequested$ = this.tabCloseSubject.asObservable();
+
+  public init(): void {
+    if (typeof document === 'undefined') return;
+
+    fromEvent<KeyboardEvent>(document, 'keydown')
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(event => {
+        const target = event.target as HTMLElement | null;
+        const isInputField = target && (
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+          target.isContentEditable
+        );
+
+        if (event.altKey && event.shiftKey && event.code === 'KeyW') {
+          event.preventDefault();
+          this.tabCloseSubject.next();
+          return;
+        }
+
+        if ((event.ctrlKey || event.metaKey) && event.code === 'KeyS') {
+          event.preventDefault();
+          this.saveSubject.next();
+          return;
+        }
+
+        if (event.key === '/' && !isInputField) {
+          event.preventDefault();
+          this.searchSubject.next();
+        }
       });
   }
 }
-
-export const localDb = new MinimalBoardGamesDB();
-```
-
-### 1.3 Remote Supabase Database Schema (PostgreSQL DDL)
-
-```sql
-create type game_kind as enum ('tictactoe', 'connect4', 'gomoku', 'reversi', 'checkers', 'hex');
-create type match_status as enum ('waiting', 'active', 'draw', 'won_black', 'won_white', 'abandoned');
-create type player_color as enum ('black', 'white');
-
--- MIGRATION NOTE (chess -> hex): the rename is a rename, not a drop-and-add, so
--- a deployment that already has the enum keeps its rows readable.
---   * fresh install -> 'chess' absent              -> undefined_object (no-op)
---   * migrated      -> 'hex' present, no 'chess'   -> undefined_object (no-op)
--- Neither branch is an error, so a single script serves both cases.
-do $$
-begin
-  alter type public.game_kind rename value 'chess' to 'hex';
-exception
-  when undefined_object then null;
-end;
-$$;
-
-create table public.game_rooms (
-  id uuid primary key default gen_random_uuid(),
-  game_kind game_kind not null,
-  status match_status not null default 'waiting',
-  player_black_token text not null,
-  player_white_token text null,
-  current_turn player_color not null default 'black',
-  turn_number integer not null default 1,
-  board_snapshot jsonb not null,
-  winner player_color null,
-  version integer not null default 1,
-  -- Increments on every RESET. Moves are stamped with the epoch that was
-  -- current when they were played, so a reset starts a new move log without
-  -- destroying the old one. See submit_terminal_update.
-  reset_epoch integer not null default 0,
-  constraint game_rooms_reset_epoch_non_negative check (reset_epoch >= 0),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
--- Row Level Security: updates require matching room version to prevent races
-create policy "Allow seated players to update room turn and state"
-  on public.game_rooms for update
-  using (true)
-  with check (true);
-
-create table public.game_moves (
-  id uuid primary key default gen_random_uuid(),
-  room_id uuid not null references public.game_rooms(id) on delete cascade,
-  -- The room reset_epoch in force when this move was played. Ply numbering
-  -- restarts at 1 after a reset, so (room_id, epoch, ply) is the identity of a
-  -- move; epoch alone is what separates one game from its successors.
-  epoch integer not null default 0,
-  constraint game_moves_epoch_non_negative check (epoch >= 0),
-  ply integer not null,
-  player player_color not null,
-  from_coord jsonb null,
-  to_coord jsonb not null,
-  payload text null,
-  created_at timestamptz not null default now()
-);
-
-alter table public.game_rooms enable row level security;
-alter table public.game_moves enable row level security;
-
--- Full-history replay on load/reconnect reads by (room_id, epoch, ply). This
--- index must carry the epoch: ply numbering restarts at 1 inside every epoch,
--- so a lookup that omitted it would merge two different games' moves and
--- rebuild a board from a log that never happened.
-create index if not exists game_moves_room_epoch_ply_idx
-  on public.game_moves (room_id, epoch, ply);
-create index if not exists game_rooms_kind_status_idx
-  on public.game_rooms (game_kind, status);
-
--- game_moves is an APPEND-ONLY audit trail. A RESET never deletes a row:
--- submit_terminal_update advances game_rooms.reset_epoch instead, which starts a
--- new log and leaves the old one intact as the record of the game that preceded
--- it. Rows still disappear when their room is deleted, via the cascade above.
-
-drop policy if exists "Public anonymous access to insert/update game rooms" on public.game_rooms;
-drop policy if exists "Public anonymous access to read game rooms" on public.game_rooms;
-drop policy if exists "Public anonymous access to moves" on public.game_moves;
-drop policy if exists "Allow seated players to update room turn and state" on public.game_rooms;
-
--- Read access is public for observers
-create policy "Allow reading game rooms"
-  on public.game_rooms for select
-  using (true);
-
-create policy "Allow inserting game rooms"
-  on public.game_rooms for insert
-  with check (true);
-
--- ARCHITECTURAL DECISION: public.game_rooms intentionally has NO client-side UPDATE policy.
--- All mutations must funnel through SECURITY DEFINER RPCs (submit_turn_move, join_room).
--- TRUST MODEL & VALIDATION BOUNDARY:
--- PostgreSQL RPC enforces room lifecycle, seat authorization, valid turn order, and OCC version locking.
--- Board rule validation is client-authoritative: receiving clients re-derive state via engine/rules/*.ts
--- on game_moves Realtime inserts. On initial load or reconnect, full game_moves history is replayed
--- against initial state to verify room snapshot integrity. Divergence sets syncState: 'conflict'.
-create or replace function public.submit_turn_move(
-  p_room_id uuid,
-  p_player_token text,
-  p_expected_version integer,
-  p_move_id uuid,
-  p_ply integer,
-  p_player player_color,
-  p_from_coord jsonb,
-  p_to_coord jsonb,
-  p_payload text,
-  p_board_snapshot jsonb,
-  p_winner player_color,
-  p_status match_status
-)
-returns text
-language plpgsql
-security definer
-as $$
-declare
-  v_room public.game_rooms%rowtype;
-  v_next_turn player_color;
-begin
-  select * into v_room
-  from public.game_rooms
-  where id = p_room_id for update;
-
-  if not found then
-    return 'room_not_found';
-  end if;
-
-  -- Reject moves on finished, waiting, or abandoned rooms
-  if v_room.status != 'active' then
-    return 'room_inactive';
-  end if;
-
-  if v_room.version != p_expected_version then
-    return 'version_conflict';
-  end if;
-
-  -- PAYLOAD CEILING. The board snapshot is the one field whose size is not
-  -- bounded by the schema, and it is the field a hostile or buggy client
-  -- controls. 8192 bytes is roughly 4x the largest real snapshot (the 8x8
-  -- Reversi board), so the check never rejects an honest client while still
-  -- bounding what a single anonymous RPC call can write.
-  if p_board_snapshot is null
-    or octet_length(p_board_snapshot::text) > 8192 then
-    return 'payload_too_large';
-  end if;
-
-  -- KIND INTEGRITY CHECK. A snapshot with no `kind` key, or one whose kind is
-  -- JSON null, compares as NULL under `<>`, and a NULL condition is not TRUE —
-  -- so `is distinct from` is required here, not a stylistic preference. Without
-  -- it a null-kind snapshot walks straight through and the room is left holding
-  -- a board no engine can parse.
-  if (p_board_snapshot ->> 'kind') is distinct from v_room.game_kind::text then
-    return 'invalid_payload_kind';
-  end if;
-
-  -- Validate seat identity and turn order with strict null check
-  if p_player = 'black' and (v_room.player_black_token is null or v_room.player_black_token != p_player_token or v_room.current_turn != 'black') then
-    return 'unauthorized';
-  end if;
-
-  if p_player = 'white' and (v_room.player_white_token is null or v_room.player_white_token != p_player_token or v_room.current_turn != 'white') then
-    return 'unauthorized';
-  end if;
-
-  -- Idempotent move insertion, stamped with the epoch that is current now. The
-  -- OCC version check above has already established that no RESET landed since
-  -- the client read the room, so v_room.reset_epoch is the epoch this move was
-  -- actually played in; a move that raced a reset lands in the old epoch, and
-  -- the version conflict that follows sends it back rather than corrupting the
-  -- new log.
-  insert into public.game_moves (id, room_id, epoch, ply, player, from_coord, to_coord, payload, created_at)
-  values (p_move_id, p_room_id, v_room.reset_epoch, p_ply, p_player, p_from_coord, p_to_coord, p_payload, now())
-  on conflict (id) do nothing;
-
-  v_next_turn := case when p_player = 'black' then 'white' else 'black' end;
-
-  -- Advance room snapshot atomically
-  update public.game_rooms
-  set
-    board_snapshot = p_board_snapshot,
-    current_turn = case when p_status = 'active' then v_next_turn else v_room.current_turn end,
-    turn_number = v_room.turn_number + 1,
-    status = p_status,
-    winner = p_winner,
-    version = v_room.version + 1,
-    updated_at = now()
-  where id = p_room_id;
-
-  return 'success';
-end;
-$$;
-
--- Atomic seat reservation for incoming opponents
-create or replace function public.join_room(
-  p_room_id uuid,
-  p_player_token text
-)
-returns text
-language plpgsql
-security definer
-as $$
-declare
-  v_room public.game_rooms%rowtype;
-begin
-  select * into v_room
-  from public.game_rooms
-  where id = p_room_id for update;
-
-  if not found then
-    return 'room_not_found';
-  end if;
-
-  if v_room.player_black_token = p_player_token then
-    return 'seated_black';
-  end if;
-
-  if v_room.player_white_token = p_player_token then
-    return 'seated_white';
-  end if;
-
-  if v_room.status != 'waiting' then
-    return 'room_closed';
-  end if;
-
-  if v_room.player_white_token is null then
-    update public.game_rooms
-    set
-      player_white_token = p_player_token,
-      status = 'active',
-      version = v_room.version + 1,
-      updated_at = now()
-    where id = p_room_id;
-    return 'seated_white';
-  end if;
-
-  return 'room_full';
-end;
-$$;
-
--- RPC: submit_terminal_update — resign / reset without a client UPDATE policy.
---
--- ARCHITECTURAL DECISION: the reset advances an epoch rather than deleting the
--- move log. Deleting the rows of the finished game is the obvious way to make a
--- reset look clean, and it destroys the only record of what actually happened in
--- that room. Instead the log stays append-only and the reset moves the room
--- forward: ply numbering restarts at 1 inside the new epoch, clients read only
--- the current epoch, and every earlier move remains queryable forever.
-create or replace function public.submit_terminal_update(
-  p_room_id uuid,
-  p_player_token text,
-  p_expected_version integer,
-  p_board_snapshot jsonb,
-  p_winner player_color,
-  p_turn_number integer,
-  p_status match_status,
-  p_clear_history boolean
-)
-returns text
-language plpgsql
-security definer
-as $$
-declare
-  v_room public.game_rooms%rowtype;
-begin
-  select * into v_room
-  from public.game_rooms
-  where id = p_room_id for update;
-
-  if not found then
-    return 'room_not_found';
-  end if;
-
-  if v_room.version != p_expected_version then
-    return 'version_conflict';
-  end if;
-
-  -- Same two payload guards as submit_turn_move, for the same reasons: a
-  -- bounded snapshot size, and `is distinct from` rather than `<>` so a
-  -- missing or JSON-null `kind` is rejected instead of comparing as NULL and
-  -- passing.
-  if p_board_snapshot is null
-    or octet_length(p_board_snapshot::text) > 8192 then
-    return 'payload_too_large';
-  end if;
-
-  if (p_board_snapshot ->> 'kind') is distinct from v_room.game_kind::text then
-    return 'invalid_payload_kind';
-  end if;
-
-  -- The update and the epoch bump happen in the SAME statement, so the room is
-  -- never observed in a state where its epoch and its moves disagree. A
-  -- separate `delete from game_moves` after this would open exactly that window
-  -- — and would be the destructive step the epoch exists to avoid.
-  update public.game_rooms
-  set
-    board_snapshot = p_board_snapshot,
-    current_turn = 'black',
-    turn_number = p_turn_number,
-    status = p_status,
-    winner = p_winner,
-    version = v_room.version + 1,
-    reset_epoch = case
-      when p_clear_history then v_room.reset_epoch + 1
-      else v_room.reset_epoch
-    end,
-    updated_at = now()
-  where id = p_room_id;
-
-  return 'success';
-end;
-$$;
-
-revoke execute on function public.submit_turn_move from public;
-grant execute on function public.submit_turn_move to anon, authenticated;
-
-revoke execute on function public.join_room from public;
-grant execute on function public.join_room to anon, authenticated;
-
-revoke execute on function public.submit_terminal_update from public;
-grant execute on function public.submit_terminal_update to anon, authenticated;
-
-create policy "Allow reading game moves"
-  on public.game_moves for select
-  using (true);
-
-alter publication supabase_realtime add table public.game_rooms;
-alter publication supabase_realtime add table public.game_moves;
 ```
 
 ---
 
-## Section 2: Component Architecture
+## 4. Responsive Breakpoint Specification
 
-### 2.1 Directory Structure
-
-```text
-src/
-├── app/
-│   ├── layout.tsx
-│   ├── page.tsx
-│   ├── [gameKind]/
-│   │   ├── page.tsx
-│   │   └── [roomId]/
-│   │       └── page.tsx
-│   └── globals.css
-├── components/
-│   ├── primitives/
-│   │   ├── Button.tsx
-│   │   ├── Badge.tsx
-│   │   ├── Modal.tsx
-│   │   ├── BoardTile.tsx
-│   │   ├── SegmentedControl.tsx
-│   │   ├── ErrorBoundary.tsx
-│   │   └── NetworkIndicator.tsx
-│   ├── compound/
-│   │   ├── GameShell.tsx
-│   │   ├── BoardStage.tsx
-│   │   ├── MoveHistoryTimeline.tsx
-│   │   ├── PlayerScoreCard.tsx
-│   │   └── GameOverDialog.tsx
-│   ├── game/
-│   │   ├── GameScreen.tsx
-│   │   ├── LocalGameRoute.tsx
-│   │   └── RealtimeGameRoute.tsx
-│   ├── lobby/
-│   │   └── GameLobby.tsx
-│   └── boards/
-│       ├── boardViewTypes.ts
-│       ├── TicTacToeBoardView.tsx
-│       ├── ConnectFourBoardView.tsx
-│       ├── GomokuBoardView.tsx
-│       ├── ReversiBoardView.tsx
-│       ├── CheckersBoardView.tsx
-│       └── HexBoardView.tsx
-├── engine/
-│   ├── rules/
-│   │   ├── tictactoe.ts
-│   │   ├── connect4.ts
-│   │   ├── gomoku.ts
-│   │   ├── reversi.ts
-│   │   ├── checkers.ts
-│   │   └── hex.ts
-│   ├── factory.ts
-│   └── types.ts
-├── hooks/
-│   ├── useGameSession.ts
-│   ├── useNetworkStatus.ts
-│   ├── useSyncQueue.ts
-│   └── useSupabaseRealtime.ts
-└── lib/
-    ├── db.ts
-    ├── realtime.ts
-    ├── seatStorage.ts
-    ├── sound.ts
-    ├── supabase.ts
-    ├── sync.ts
-    └── utils.ts
-```
-
-### 2.2 Component Hierarchy
-
-```text
-+-------------------------------------------------------+
-| App Layout (Responsive Root Shell)                    |
-| +---------------------------------------------------+ |
-| | GameShell (Top Nav + Status + NetworkIndicator)   | |
-| | +-----------------------+ +---------------------+ | |
-| | | Active Board View     | | Side Panel          | | |
-| | | (Grid 360px -> 1024px)| | (PlayerCard + Turn) | | |
-| | |                       | | (MoveHistoryTimeline| | |
-| | | [BoardTile Primitives]| | (Sync / Reset CTAs) | | |
-| | +-----------------------+ +---------------------+ | |
-| | GameOverDialog (Modal Primitive)                  | |
-| +---------------------------------------------------+ |
-+-------------------------------------------------------+
-```
-
----
-
-## Section 3: Core Feature Logic & Step-by-Step Algorithms
-
-### 3.1 Rule Engines
-
-#### 3.1.1 Tic-Tac-Toe Engine
-
-**The game is 3-piece vanishing Tic-Tac-Toe, not the nine-move original.** A
-player may hold at most `TICTACTOE_MARKS_PER_PLAYER = 3` marks at a time, and
-placing a fourth lifts the oldest of the three off the board first. Two
-consequences follow, and both are the point of the rule rather than side effects
-of it:
-
-- **A draw is mathematically impossible.** Six marks is the most the board can
-  hold — three a side — so at least three of the nine cells are always empty and
-  the game can never fill. `isDraw` is therefore the constant `false`, not a
-  check that happens to come out false. The field stays so the status ladder is
-  uniform across all six games rather than special-casing one of them.
-- **The vanishing order is the order the marks were placed**, which the flat
-  nine-cell snapshot cannot record. Cell 0 is not "the oldest mark" because it
-  is the lowest index; it is the oldest only if that player played it first. The
-  order comes from the move log, passed in as `playerHistory` — and that is why
-  the log, not the snapshot, is what the integrity gate replays.
-
-**The winning-line search is scoped to the mark just played.** `findTicTacToeWinningLine`
-takes the index that was filled and only considers the four (or two, at a
-corner) lines containing it. Searching all eight lines unconditionally reports a
-line that was completed by an *earlier* move and merely still on the board — the
-board declares a winner for a column that reads `[empty, O, empty]`. A scope
-that narrows the candidates is therefore a correctness requirement, not an
-optimisation. `applyTicTacToeMove` then re-verifies `nextBoard[a] === player`
-before reporting the line, so a colour that is not the mover's can never be
-returned as the winner.
+### 4.1 ViewportService API
+`src/app/core/services/viewport.service.ts`:
 
 ```typescript
-import { Coordinates, PlayerColor, TicTacToeBoard } from "../types";
+import { Injectable, inject } from '@angular/core';
+import { BreakpointObserver } from '@angular/cdk/layout';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { map } from 'rxjs/operators';
 
-export const TICTACTOE_SIZE = 3;
-export const TICTACTOE_CELLS = TICTACTOE_SIZE * TICTACTOE_SIZE;
+@Injectable({ providedIn: 'root' })
+export class ViewportService {
+  private readonly breakpointObserver = inject(BreakpointObserver);
 
-/** Marks one player may hold at once. Placing a fourth removes the oldest. */
-export const TICTACTOE_MARKS_PER_PLAYER = 3;
+  private readonly mobileQuery = '(max-width: 767px)';
+  private readonly tabletQuery = '(min-width: 768px) and (max-width: 1023px)';
+  private readonly desktopQuery = '(min-width: 1024px)';
+  private readonly coarsePointerQuery = '(pointer: coarse)';
 
-export const TICTACTOE_WINNING_LINES: readonly (readonly [number, number, number])[] = [
-  [0, 1, 2], [3, 4, 5], [6, 7, 8],
-  [0, 3, 6], [1, 4, 7], [2, 5, 8],
-  [0, 4, 8], [2, 4, 6],
-];
-
-export function createInitialTicTacToeBoard(): TicTacToeBoard {
-  return Array<TicTacToeBoard[number]>(TICTACTOE_CELLS).fill(null);
-}
-
-export function validateTicTacToeMove(board: TicTacToeBoard, index: number): boolean {
-  return index >= 0 && index < TICTACTOE_CELLS && board[index] === null;
-}
-
-/**
- * The marks `player` currently holds, oldest first. A mark is "currently held"
- * if it is still on the board: a player who has played five marks holds the last
- * three, because the first two were removed by the rule.
- */
-export function getTicTacToeActiveMarks(
-  board: TicTacToeBoard,
-  player: PlayerColor,
-  playerHistory?: readonly Coordinates[]
-): number[] {
-  const inOrder: number[] = [];
-  const seen = new Set<number>();
-
-  if (playerHistory) {
-    for (const coord of playerHistory) {
-      const index = tictactoeIndexOf(coord);
-      // A log naming a cell twice, or a cell this player no longer holds, cannot
-      // contribute a mark: a vanished mark is gone, and playing the same cell
-      // twice never happens under a rule that empties the cell first.
-      if (seen.has(index) || board[index] !== player) continue;
-      seen.add(index);
-      inOrder.push(index);
-    }
-  } else {
-    // Deterministic stand-in for a caller that handed us only a board. It
-    // agrees with placement order only when the player played in ascending
-    // order; every path inside the app supplies the log.
-    for (let index = 0; index < TICTACTOE_CELLS; index += 1) {
-      if (board[index] === player) inOrder.push(index);
-    }
-  }
-
-  return inOrder.slice(-TICTACTOE_MARKS_PER_PLAYER);
-}
-
-/** The mark that leaves the board when `player` places their next one. */
-export function getTicTacToeVanishingIndex(
-  board: TicTacToeBoard,
-  player: PlayerColor,
-  playerHistory?: readonly Coordinates[]
-): number | null {
-  const active = getTicTacToeActiveMarks(board, player, playerHistory);
-  return active.length === TICTACTOE_MARKS_PER_PLAYER ? (active[0] ?? null) : null;
-}
-
-/**
- * The winning line containing the last stone, or `null` when there is none.
- * `index` is optional: omitting it searches the whole board (the audit use),
- * supplying it searches only the lines that mark completed — which is what
- * decides a game.
- */
-export function findTicTacToeWinningLine(
-  board: TicTacToeBoard,
-  index?: number
-): readonly [number, number, number] | null {
-  for (const line of TICTACTOE_WINNING_LINES) {
-    if (index !== undefined && !line.includes(index)) continue;
-    const [a, b, c] = line;
-    const cell = board[a];
-    if (cell !== null && cell === board[b] && cell === board[c]) return line;
-  }
-  return null;
-}
-
-export function applyTicTacToeMove(
-  board: TicTacToeBoard,
-  index: number,
-  player: PlayerColor,
-  playerHistory?: readonly Coordinates[]
-): {
-  nextBoard: TicTacToeBoard;
-  winner: PlayerColor | null;
-  isDraw: boolean;
-  vanishedIndex: number | null;
-  winningLine: Coordinates[] | null;
-} {
-  if (!validateTicTacToeMove(board, index)) {
-    throw new Error(`Invalid tic-tac-toe move: index ${index} is out of range or occupied`);
-  }
-
-  const nextBoard = [...board];
-  // Room first, then the mark. Reversing the two would let a player refill the
-  // cell their own vanishing mark just vacated and hold four at once.
-  const vanishedIndex = getTicTacToeVanishingIndex(board, player, playerHistory);
-  if (vanishedIndex !== null) nextBoard[vanishedIndex] = null;
-  nextBoard[index] = player;
-
-  // Only the lines through the mark just played are candidates.
-  const winningLineMatch = findTicTacToeWinningLine(nextBoard, index);
-
-  // Cell indices internally, board coordinates outside. Every consumer of a
-  // result — the session, the views, the move log — speaks in coordinates, and
-  // a nine-cell array index is a tic-tac-toe detail that would leak into all of
-  // them if this field kept it.
-  let winningLine: Coordinates[] | null = null;
-  if (winningLineMatch) {
-    const [a] = winningLineMatch;
-    // Belt and braces: the line must be the MOVER's. A line belonging to the
-    // opponent is never a win, whatever the search returned.
-    if (nextBoard[a] === player) {
-      winningLine = winningLineMatch.map(tictactoeCoordOf);
-    }
-  }
-
-  return {
-    nextBoard,
-    winner: winningLine ? player : null,
-    isDraw: false, // Mathematically impossible: three marks a side, nine cells.
-    vanishedIndex,
-    winningLine,
-  };
-}
-```
-
-#### 3.1.2 Connect Four Engine
-```typescript
-import { Connect4Board, PlayerColor } from "../types";
-
-export const CONNECT4_ROWS = 6;
-export const CONNECT4_COLS = 7;
-
-export function createInitialConnect4Board(): Connect4Board {
-  return Array.from({ length: CONNECT4_ROWS }, () => Array(CONNECT4_COLS).fill(null));
-}
-
-export function getConnect4LowestAvailableRow(board: Connect4Board, col: number): number {
-  for (let row = CONNECT4_ROWS - 1; row >= 0; row--) {
-    if (board[row][col] === null) return row;
-  }
-  return -1;
-}
-
-export function applyConnect4Move(
-  board: Connect4Board,
-  col: number,
-  player: PlayerColor
-): { nextBoard: Connect4Board; placedRow: number; winner: PlayerColor | null; isDraw: boolean } {
-  const targetRow = getConnect4LowestAvailableRow(board, col);
-  if (targetRow === -1) {
-    throw new Error("Target column is fully occupied");
-  }
-
-  const nextBoard = board.map((r) => [...r]);
-  nextBoard[targetRow][col] = player;
-
-  const directions = [
-    [0, 1],
-    [1, 0],
-    [1, 1],
-    [1, -1],
-  ];
-
-  for (const [dr, dc] of directions) {
-    let count = 1;
-
-    for (let s = 1; s < 4; s++) {
-      const nr = targetRow + dr * s;
-      const nc = col + dc * s;
-      if (nr >= 0 && nr < CONNECT4_ROWS && nc >= 0 && nc < CONNECT4_COLS && nextBoard[nr][nc] === player) {
-        count++;
-      } else {
-        break;
-      }
-    }
-
-    for (let s = 1; s < 4; s++) {
-      const nr = targetRow - dr * s;
-      const nc = col - dc * s;
-      if (nr >= 0 && nr < CONNECT4_ROWS && nc >= 0 && nc < CONNECT4_COLS && nextBoard[nr][nc] === player) {
-        count++;
-      } else {
-        break;
-      }
-    }
-
-    if (count >= 4) {
-      return { nextBoard, placedRow: targetRow, winner: player, isDraw: false };
-    }
-  }
-
-  const isDraw = nextBoard[0].every((cell) => cell !== null);
-  return { nextBoard, placedRow: targetRow, winner: null, isDraw };
-}
-```
-
-#### 3.1.3 Gomoku Engine
-```typescript
-import { Coordinates, GomokuBoard, PlayerColor } from "../types";
-
-export const GOMOKU_SIZE = 15;
-
-export function createInitialGomokuBoard(): GomokuBoard {
-  return Array.from({ length: GOMOKU_SIZE }, () => Array(GOMOKU_SIZE).fill(null));
-}
-
-export function applyGomokuMove(
-  board: GomokuBoard,
-  coord: Coordinates,
-  player: PlayerColor
-): { nextBoard: GomokuBoard; winner: PlayerColor | null; isDraw: boolean } {
-  if (board[coord.y][coord.x] !== null) {
-    throw new Error("Square is already occupied");
-  }
-
-  const nextBoard = board.map((r) => [...r]);
-  nextBoard[coord.y][coord.x] = player;
-
-  const vectors = [
-    [0, 1],
-    [1, 0],
-    [1, 1],
-    [1, -1],
-  ];
-
-  for (const [dy, dx] of vectors) {
-    let streak = 1;
-    for (let step = 1; step < 5; step++) {
-      const ny = coord.y + dy * step;
-      const nx = coord.x + dx * step;
-      if (ny >= 0 && ny < GOMOKU_SIZE && nx >= 0 && nx < GOMOKU_SIZE && nextBoard[ny][nx] === player) {
-        streak++;
-      } else {
-        break;
-      }
-    }
-    for (let step = 1; step < 5; step++) {
-      const ny = coord.y - dy * step;
-      const nx = coord.x - dx * step;
-      if (ny >= 0 && ny < GOMOKU_SIZE && nx >= 0 && nx < GOMOKU_SIZE && nextBoard[ny][nx] === player) {
-        streak++;
-      } else {
-        break;
-      }
-    }
-    if (streak >= 5) {
-      return { nextBoard, winner: player, isDraw: false };
-    }
-  }
-
-  const isDraw = nextBoard.every((row) => row.every((c) => c !== null));
-  return { nextBoard, winner: null, isDraw };
-}
-```
-
-#### 3.1.4 Reversi Engine
-```typescript
-import { Coordinates, PlayerColor, ReversiBoard } from "../types";
-
-export const REVERSI_SIZE = 8;
-
-export function createInitialReversiBoard(): ReversiBoard {
-  const board: ReversiBoard = Array.from({ length: REVERSI_SIZE }, () =>
-    Array(REVERSI_SIZE).fill(null)
+  public readonly isMobile = toSignal(
+    this.breakpointObserver.observe(this.mobileQuery).pipe(map(s => s.matches)),
+    { initialValue: this.breakpointObserver.isMatched(this.mobileQuery) }
   );
-  board[3][3] = "white";
-  board[3][4] = "black";
-  board[4][3] = "black";
-  board[4][4] = "white";
-  return board;
-}
 
-export function getFlipsForMove(
-  board: ReversiBoard,
-  coord: Coordinates,
-  player: PlayerColor
-): Coordinates[] {
-  if (board[coord.y][coord.x] !== null) return [];
-  const opponent: PlayerColor = player === "black" ? "white" : "black";
-  const flips: Coordinates[] = [];
-  const directions = [
-    [-1, -1], [-1, 0], [-1, 1],
-    [0, -1],           [0, 1],
-    [1, -1],  [1, 0],  [1, 1],
-  ];
-
-  for (const [dy, dx] of directions) {
-    const candidateFlips: Coordinates[] = [];
-    let curY = coord.y + dy;
-    let curX = coord.x + dx;
-
-    while (curY >= 0 && curY < REVERSI_SIZE && curX >= 0 && curX < REVERSI_SIZE) {
-      if (board[curY][curX] === opponent) {
-        candidateFlips.push({ y: curY, x: curX });
-        curY += dy;
-        curX += dx;
-      } else if (board[curY][curX] === player) {
-        if (candidateFlips.length > 0) {
-          flips.push(...candidateFlips);
-        }
-        break;
-      } else {
-        break;
-      }
-    }
-  }
-  return flips;
-}
-
-export function getValidReversiMoves(board: ReversiBoard, player: PlayerColor): Coordinates[] {
-  const validMoves: Coordinates[] = [];
-  for (let y = 0; y < REVERSI_SIZE; y++) {
-    for (let x = 0; x < REVERSI_SIZE; x++) {
-      if (getFlipsForMove(board, { x, y }, player).length > 0) {
-        validMoves.push({ x, y });
-      }
-    }
-  }
-  return validMoves;
-}
-
-export function applyReversiMove(
-  board: ReversiBoard,
-  coord: Coordinates,
-  player: PlayerColor
-): {
-  nextBoard: ReversiBoard;
-  winner: PlayerColor | null;
-  isDraw: boolean;
-  nextTurnHasValidMoves: boolean;
-} {
-  const flips = getFlipsForMove(board, coord, player);
-  if (flips.length === 0) {
-    throw new Error("Invalid move: no pieces flipped");
-  }
-
-  const nextBoard = board.map((r) => [...r]);
-  nextBoard[coord.y][coord.x] = player;
-  for (const f of flips) {
-    nextBoard[f.y][f.x] = player;
-  }
-
-  const opponent: PlayerColor = player === "black" ? "white" : "black";
-  const opponentMoves = getValidReversiMoves(nextBoard, opponent);
-  const playerMoves = getValidReversiMoves(nextBoard, player);
-
-  let winner: PlayerColor | null = null;
-  let isDraw = false;
-
-  if (opponentMoves.length === 0 && playerMoves.length === 0) {
-    let blackCount = 0;
-    let whiteCount = 0;
-    for (let r = 0; r < REVERSI_SIZE; r++) {
-      for (let c = 0; c < REVERSI_SIZE; c++) {
-        if (nextBoard[r][c] === "black") blackCount++;
-        if (nextBoard[r][c] === "white") whiteCount++;
-      }
-    }
-    if (blackCount > whiteCount) winner = "black";
-    else if (whiteCount > blackCount) winner = "white";
-    else isDraw = true;
-  }
-
-  return {
-    nextBoard,
-    winner,
-    isDraw,
-    nextTurnHasValidMoves: opponentMoves.length > 0,
-  };
-}
-```
-
-#### 3.1.5 Checkers Engine
-```typescript
-import { CheckersBoard, CheckersCell, Coordinates, PlayerColor } from "../types";
-
-export const CHECKERS_SIZE = 8;
-
-export function createInitialCheckersBoard(): CheckersBoard {
-  const board: CheckersBoard = Array.from({ length: CHECKERS_SIZE }, () =>
-    Array(CHECKERS_SIZE).fill(null)
+  public readonly isTablet = toSignal(
+    this.breakpointObserver.observe(this.tabletQuery).pipe(map(s => s.matches)),
+    { initialValue: this.breakpointObserver.isMatched(this.tabletQuery) }
   );
-  for (let y = 0; y < 3; y++) {
-    for (let x = 0; x < CHECKERS_SIZE; x++) {
-      if ((y + x) % 2 === 1) {
-        board[y][x] = { color: "black", type: "pawn" };
-      }
-    }
-  }
-  for (let y = 5; y < CHECKERS_SIZE; y++) {
-    for (let x = 0; x < CHECKERS_SIZE; x++) {
-      if ((y + x) % 2 === 1) {
-        board[y][x] = { color: "white", type: "pawn" };
-      }
-    }
-  }
-  return board;
-}
 
-export interface CheckersMoveOption {
-  from: Coordinates;
-  to: Coordinates;
-  jumpedCoord?: Coordinates;
-}
+  public readonly isDesktop = toSignal(
+    this.breakpointObserver.observe(this.desktopQuery).pipe(map(s => s.matches)),
+    { initialValue: this.breakpointObserver.isMatched(this.desktopQuery) }
+  );
 
-export function getCheckersLegalMoves(board: CheckersBoard, player: PlayerColor): CheckersMoveOption[] {
-  const jumpMoves: CheckersMoveOption[] = [];
-  const simpleMoves: CheckersMoveOption[] = [];
-  const forwardDelta = player === "black" ? 1 : -1;
-
-  for (let y = 0; y < CHECKERS_SIZE; y++) {
-    for (let x = 0; x < CHECKERS_SIZE; x++) {
-      const piece = board[y][x];
-      if (!piece || piece.color !== player) continue;
-
-      const directions: number[][] = [];
-      if (piece.type === "king") {
-        directions.push([-1, -1], [-1, 1], [1, -1], [1, 1]);
-      } else {
-        directions.push([forwardDelta, -1], [forwardDelta, 1]);
-      }
-
-      for (const [dy, dx] of directions) {
-        const ny = y + dy;
-        const nx = x + dx;
-
-        if (ny >= 0 && ny < CHECKERS_SIZE && nx >= 0 && nx < CHECKERS_SIZE) {
-          if (board[ny][nx] === null) {
-            simpleMoves.push({ from: { x, y }, to: { x: nx, y: ny } });
-          } else if (board[ny][nx]?.color !== player) {
-            const jny = ny + dy;
-            const jnx = nx + dx;
-            if (
-              jny >= 0 &&
-              jny < CHECKERS_SIZE &&
-              jnx >= 0 &&
-              jnx < CHECKERS_SIZE &&
-              board[jny][jnx] === null
-            ) {
-              jumpMoves.push({
-                from: { x, y },
-                to: { x: jnx, y: jny },
-                jumpedCoord: { x: nx, y: ny },
-              });
-            }
-          }
-        }
-      }
-    }
-  }
-  return jumpMoves.length > 0 ? jumpMoves : simpleMoves;
-}
-
-export function applyCheckersMove(
-  board: CheckersBoard,
-  move: CheckersMoveOption,
-  player: PlayerColor
-): {
-  nextBoard: CheckersBoard;
-  winner: PlayerColor | null;
-  isDraw: boolean;
-  canJumpAgain: boolean;
-} {
-  const nextBoard = board.map((r) => [...r]);
-  const activePiece = nextBoard[move.from.y][move.from.x];
-
-  if (!activePiece || activePiece.color !== player) {
-    throw new Error("Invalid checkers move: piece selection error");
-  }
-
-  nextBoard[move.from.y][move.from.x] = null;
-
-  // Whether this move CROWNS a man, as distinct from a piece that was already a
-  // king. The distinction decides the rest of the turn: a king that lands on the
-  // king row has not changed, so its capture chain continues, while a man that
-  // arrives there has just been promoted and the move is over.
-  const wasKing = activePiece.type === "king";
-  let isCrowned = wasKing;
-  if (player === "black" && move.to.y === CHECKERS_SIZE - 1) isCrowned = true;
-  if (player === "white" && move.to.y === 0) isCrowned = true;
-  const newlyCrowned = isCrowned && !wasKing;
-
-  nextBoard[move.to.y][move.to.x] = {
-    color: player,
-    type: isCrowned ? "king" : "pawn",
-  };
-
-  // The captured piece leaves the board with the move, not after it: the jump
-  // removes it, and leaving it on while the chain continues would let the same
-  // victim be jumped twice in one turn.
-  if (move.jumpedCoord) {
-    nextBoard[move.jumpedCoord.y][move.jumpedCoord.x] = null;
-  }
-
-  const opponent: PlayerColor = player === "black" ? "white" : "black";
-  const opponentMoves = getCheckersLegalMoves(nextBoard, opponent);
-
-  let winner: PlayerColor | null = null;
-  if (opponentMoves.length === 0) {
-    winner = player;
-  }
-
-  // Whether this capture is the whole move or only its first leg. The question
-  // can only be asked of the piece that just moved, so the search is restricted
-  // to jumps that start on the landing square: any other jumping piece on the
-  // board is irrelevant, because the forced-capture rule binds the whole turn to
-  // the piece already in hand, not to a fresh choice of victim.
-  //
-  // CROWNING ENDS THE TURN. A man that crowns on a jump is the one case where a
-  // legal continuation is not a continuation. It has just become a king, and as a
-  // king it can of course jump on — but the turn ends here, because tournament
-  // draughts treats the crown as the end of the move rather than as a promotion
-  // in the middle of one. The bug this prevents is silent and looks like a gift:
-  // the chain carried on with the new king, taking one more piece than the rules
-  // allow, and the opponent was never given the turn that should have followed.
-  const furtherJumps =
-    move.jumpedCoord && !newlyCrowned
-      ? getCheckersMovesFrom(nextBoard, move.to, player).filter(
-          (option) => option.jumpedCoord !== undefined
-        )
-      : [];
-
-  return { nextBoard, winner, isDraw: false, canJumpAgain: furtherJumps.length > 0 };
-}
-```
-
-**The session layer turns `canJumpAgain` into a retained selection.**
-`factory.ts` keeps the landing square as the new selection — and therefore keeps
-the turn with the mover — only when `canJumpAgain` is true *and* the game was not
-just won. A crowned jump reports `canJumpAgain: false`, so the selection is
-cleared, the turn passes, and the opponent plays from a position that already
-accounts for every piece the rules allowed the player to take.
-
-#### 3.1.6 Hex Engine (Deterministic Micro-Engine)
-
-**Hex is the one game of the six whose outcome is decided by a topology fact
-rather than by a rule.** Two players place a stone of their own colour on an
-empty cell in turn; the first to hold an unbroken chain of their stones between
-their two opposite sides wins. Black connects the top row to the bottom row;
-White connects the left column to the right column. Black moves first.
-
-**The board is a rhombus, not a rectangle, and the geometry has to be stated
-once and only once.** Getting it wrong does not produce a crash — it produces a
-board where the diagonals do not connect and a chain that *looks* broken to the
-player is judged joined by the engine. The convention used here is the standard
-one: rows are `y = 0..6`, columns are `x = 0..6`, and row `y` is shifted half a
-cell to the right relative to row `y - 1`. A cell therefore has six neighbours and
-only six.
-
-**The start edge and the goal edge must be separate predicates.** A flood fill
-seeded from a player's *start* edge immediately re-encounters that same edge, so
-a predicate answering "is this cell on one of my two edges?" reports a win for
-the single stone the search started from — and for every position that touches
-its own start edge, which is every position. A cell counts as a win only when it
-lies on the edge at the *other* end of the span.
-
-**There is no draw.** Hex is completely solved (Berlekamp, Conway and Guy, 1990),
-and more practically the exhausted position is unreachable for a 49-cell board
-with two players alternating: the board is full only if all 49 cells are taken,
-and at that point a chain of both colours crossing the board is a contradiction
-rather than a tie. The engine reports `isDraw: false` unconditionally, so a Hex
-room can never end in `status: "draw"` and the UI never has to describe an
-outcome that cannot occur.
-
-```typescript
-import { Coordinates, HexBoard, HexCell, PlayerColor } from "../types";
-import { getBoardCell } from "../types";
-
-/** Hex is played on a 7x7 rhombus — the size small enough to read on a phone. */
-export const HEX_SIZE = 7;
-
-/**
- * The six neighbours of a cell, as `(dy, dx)` offsets. Two axes run through the
- * board — "along a row" (dy = 0) and "along a column" (dy = ±1) — and because
- * each row is offset half a cell, the third axis (dy = ±1, dx = ∓1) is also
- * adjacent. Stating all six in one place is the point: a win computed over four
- * directions while the board is *drawn* with six is a bug a player sees and an
- * engine cannot.
- */
-export const HEX_DIRECTIONS: readonly (readonly [number, number])[] = [
-  [-1, 0],   // up
-  [1, 0],    // down
-  [0, -1],   // left
-  [0, 1],    // right
-  [-1, 1],   // up-right
-  [1, -1],   // down-left
-] as const;
-
-export function createInitialHexBoard(): HexBoard {
-  return Array.from({ length: HEX_SIZE }, () =>
-    Array<HexCell>(HEX_SIZE).fill(null)
+  public readonly isCoarsePointer = toSignal(
+    this.breakpointObserver.observe(this.coarsePointerQuery).pipe(map(s => s.matches)),
+    { initialValue: this.breakpointObserver.isMatched(this.coarsePointerQuery) }
   );
 }
+```
 
-function isOnBoard(x: number, y: number): boolean {
-  return y >= 0 && y < HEX_SIZE && x >= 0 && x < HEX_SIZE;
-}
+### 4.2 Breakpoint Matrix
+| Viewport Range | Tab Strip Layout | Primary Entity Surface | Secondary Rail / Actions | Pointer & Typography Rules |
+| :--- | :--- | :--- | :--- | :--- |
+| **0px - 767px (Mobile)** | Native compact select dropdown. Horizontal strip unmounted via `@if (!viewport.isMobile())`. Close icons always visible. | 100% width card stream. Chevrons collapse to current-stage badge with "Change Stage" bottom drawer. 2-column metric grid. | Rendered inside `nz-drawer` (`nzPlacement="bottom"`, height `80dvh`) triggered by sticky bottom bar (`position: sticky; bottom: 0; padding-bottom: env(safe-area-inset-bottom); height: calc(48px + env(safe-area-inset-bottom));`). | Coarse pointer rules: form controls 44px min height, 16px input font to prevent iOS zoom. No hover dependencies. |
+| **768px - 1023px (Tablet)** | Horizontal strip: 3 tabs + overflow dropdown with badge count. | Stacked vertical layout without resizable splitter. Highlights bar renders in 4-column metric layout. Single date pickers. | Tabbed sub-view below primary entity records. Composer renders inline with collapsible accordions. | Touch targets 44px min under `@media (pointer: coarse)`. Dense 28px/32px tokens active only under `@media (pointer: fine)`. |
+| **1024px+ (Desktop Console)** | Fixed console tab bar with dirty status dot indicator, close button, and shortcut triggers (`Alt+Shift+W`). | Pinned 65% left pane within `nz-splitter` (fallback to CSS grid `65% 35%`). Full 8-step chevron ribbon. | Pinned 35% right context utility rail (Activity Composer + chronological feed). | High-density tokens active under `@media (pointer: fine) and (min-width: 1024px)`: inputs 24px, table rows 28px, compact font hierarchy. |
 
-/**
- * The two edges each colour has to span, as two separate predicates — see the
- * note above. Black spans the horizontal edges, White the vertical ones; they
- * are transposes of each other under this rhombus, so keeping them in one place
- * is what stops Black and White being mixed up in a way that only shows in play.
- */
-function edgesForPlayer(player: PlayerColor): {
-  onStartEdge: (x: number, y: number) => boolean;
-  onGoalEdge: (x: number, y: number) => boolean;
-} {
-  if (player === "black") {
-    return { onStartEdge: (_x, y) => y === 0, onGoalEdge: (_x, y) => y === HEX_SIZE - 1 };
-  }
-  return { onStartEdge: (x) => x === 0, onGoalEdge: (x) => x === HEX_SIZE - 1 };
-}
-
-/**
- * The chain `player` holds between their two sides, or `null` when there is
- * none.
- *
- * A breadth-first search seeded ONLY from cells strictly on the start edge,
- * traversing only same-coloured stones through `HEX_DIRECTIONS`, and accepting
- * only a cell strictly on the goal edge. The search remembers which cell it
- * reached each one *from*, so the winning chain is handed back as a path: a
- * boolean cannot, and re-deriving the path in a view would mean a second flood
- * fill over a geometry that is only correct once, in this file.
- *
- * A chain of four stones ending at y = 3 therefore returns `null` — it is a real
- * chain, it simply has not reached the far edge.
- */
-export function findHexWinningPath(board: HexBoard, player: PlayerColor): Coordinates[] | null {
-  const { onStartEdge, onGoalEdge } = edgesForPlayer(player);
-  const queue: Coordinates[] = [];
-  // Keyed by coordinate, valued by the cell the search arrived from. A start-edge
-  // cell has no parent — it is a root, not a cell something reached.
-  const parent: Map<string, Coordinates | null> = new Map();
-
-  for (let y = 0; y < HEX_SIZE; y += 1) {
-    for (let x = 0; x < HEX_SIZE; x += 1) {
-      if (getBoardCell(board, x, y) !== player) continue;
-      if (!onStartEdge(x, y)) continue;
-      queue.push({ x, y });
-      parent.set(`${x},${y}`, null);
-    }
-  }
-
-  if (queue.length === 0) return null;
-
-  while (queue.length > 0) {
-    const current = queue.shift() as Coordinates;
-
-    // Tested on dequeue against the *far* edge, so a chain that only ever
-    // wanders back along the start edge never satisfies it.
-    if (onGoalEdge(current.x, current.y)) {
-      // Unwound from the far edge, so the path comes out goal-first; reversed,
-      // because the direction a player reads a chain in is start edge to goal
-      // edge.
-      const path: Coordinates[] = [];
-      let cell: Coordinates | null = current;
-      while (cell !== null) {
-        path.push(cell);
-        cell = parent.get(`${cell.x},${cell.y}`) ?? null;
-      }
-      return path.reverse();
-    }
-
-    for (const [dy, dx] of HEX_DIRECTIONS) {
-      const nx = current.x + dx;
-      const ny = current.y + dy;
-      if (!isOnBoard(nx, ny)) continue;
-      if (parent.has(`${nx},${ny}`)) continue;
-      if (getBoardCell(board, nx, ny) !== player) continue;
-      parent.set(`${nx},${ny}`, current);
-      queue.push({ x: nx, y: ny });
-    }
-  }
-
-  return null;
-}
-
-/**
- * `true` when `player` holds an unbroken chain between their two sides.
- * Deliberately not a second implementation of `findHexWinningPath`: two searches
- * over this geometry could disagree, and the one that gets to decide a game is
- * the one nobody reads.
- */
-export function checkHexWin(board: HexBoard, player: PlayerColor): boolean {
-  return findHexWinningPath(board, player) !== null;
-}
-
-/** Every empty cell, in row-major order. A Hex move has no origin square. */
-export function getHexLegalMoves(board: HexBoard, _player?: PlayerColor): Coordinates[] {
-  const moves: Coordinates[] = [];
-  for (let y = 0; y < HEX_SIZE; y += 1) {
-    for (let x = 0; x < HEX_SIZE; x += 1) {
-      if (getBoardCell(board, x, y) === null) moves.push({ x, y });
-    }
-  }
-  return moves;
-}
-
-/**
- * Places a stone and resolves the game.
- *
- * The coordinate is validated here rather than trusted: `applyMove` is reachable
- * from a reconstructed move log, and a log is data. An occupied cell or an
- * off-board coordinate throws rather than silently overwriting a stone, because
- * the alternative — a null winner on the current board — would let a corrupt log
- * look like a legal game that is merely still in progress.
- *
- * The board is copied before writing: the same object is held in React state,
- * serialised into the IndexedDB snapshot, and compared by the replay integrator
- * on the other client. An in-place write would make the local view appear to
- * have moved before the move was accepted.
- */
-export function applyHexMove(
-  board: HexBoard,
-  coord: Coordinates,
-  player: PlayerColor
-): {
-  nextBoard: HexBoard;
-  winner: PlayerColor | null;
-  isDraw: boolean;
-  winningLine: Coordinates[] | null;
-} {
-  if (!isOnBoard(coord.x, coord.y)) {
-    throw new RangeError(
-      `Hex move out of bounds: (${coord.x}, ${coord.y}) is not on a ${HEX_SIZE}x${HEX_SIZE} board`
-    );
-  }
-  if (getBoardCell(board, coord.x, coord.y) !== null) {
-    throw new Error(
-      `Hex cell (${coord.x}, ${coord.y}) is already occupied by ${String(getBoardCell(board, coord.x, coord.y))}`
-    );
-  }
-
-  const nextBoard = board.map((row) => row.slice());
-  nextBoard[coord.y][coord.x] = player;
-
-  const winningPath = findHexWinningPath(nextBoard, player);
-  return {
-    nextBoard,
-    winner: winningPath ? player : null,
-    isDraw: false,
-    winningLine: winningPath,
-  };
-}
-
-/** How many stones each side has on the board. Used by the score cards. */
-export function countHexStones(board: HexBoard): Record<PlayerColor, number> {
-  const counts: Record<PlayerColor, number> = { black: 0, white: 0 };
-  for (let y = 0; y < HEX_SIZE; y += 1) {
-    for (let x = 0; x < HEX_SIZE; x += 1) {
-      const cell = getBoardCell(board, x, y);
-      if (cell !== null) counts[cell] += 1;
-    }
-  }
-  return counts;
+### 4.3 Theme & High-Density SCSS System
+`src/styles/_theme-variables.scss`:
+```scss
+:root {
+  --slds-brand: #0176d3;
+  --slds-brand-dark: #014486;
+  --slds-surface: #f3f3f3;
+  --slds-surface-card: #ffffff;
+  --slds-border: #c9c9c9;
+  --slds-text-primary: #181818;
+  --slds-text-secondary: #444444;
+  --slds-success: #2e844a;
+  --slds-warning: #fe9339;
+  --slds-error: #ea001e;
+  --slds-font-size-label: 11px;
+  --slds-font-size-body: 13px;
+  --slds-font-size-heading: 16px;
 }
 ```
 
-### 3.2 Offline-First Sync & Mutation Queue
+`src/styles/_density-overrides.scss`:
+```scss
+@use './theme-variables' as *;
 
-```typescript
-import { createClient } from "@supabase/supabase-js";
-import { localDb } from "./db";
-import { GameSession, MoveRecord, SyncQueueItem } from "../types";
+@media (pointer: fine) and (min-width: 1024px) {
+  .ant-table-small .ant-table-thead > tr > th,
+  .ant-table-small .ant-table-tbody > tr > td {
+    padding: 4px 8px;
+    font-size: var(--slds-font-size-body);
+  }
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  .ant-btn-sm {
+    height: 24px;
+    padding: 0 8px;
+    font-size: var(--slds-font-size-body);
+  }
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY in environment");
-}
+  .ant-input-sm {
+    height: 24px;
+    font-size: var(--slds-font-size-body);
+  }
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-export async function dispatchMoveMutation(
-  session: GameSession,
-  mutationPayload: SyncQueueItem
-): Promise<void> {
-  await localDb.transaction("rw", localDb.games, localDb.syncQueue, async () => {
-    await localDb.games.put(session);
-    if (session.mode === "online_realtime") {
-      await localDb.syncQueue.put(mutationPayload);
-    }
-  });
-
-  if (typeof window !== "undefined" && navigator.onLine && session.mode === "online_realtime") {
-    await flushSyncQueue();
+  .ant-form-item {
+    margin-bottom: 8px;
   }
 }
 
-function isNetworkError(error: unknown): boolean {
-  if (error instanceof TypeError && error.message.includes("fetch")) return true;
-  if (typeof window !== "undefined" && !navigator.onLine) return true;
-  if (typeof error === "object" && error !== null && "status" in error) {
-    const status = (error as { status?: number }).status;
-    return status === 0 || status === 502 || status === 503 || status === 504;
+@media (pointer: coarse) {
+  input, select, textarea {
+    font-size: 16px !important;
   }
-  return false;
-}
 
-export async function flushSyncQueue(): Promise<void> {
-  const pendingItems = await localDb.syncQueue.orderBy("timestamp").toArray();
-  if (pendingItems.length === 0) return;
-
-  for (const item of pendingItems) {
-    try {
-      const session = await localDb.games.get(item.gameId);
-      if (!session) {
-        await localDb.syncQueue.delete(item.id);
-        continue;
-      }
-
-      switch (item.action) {
-        case "CREATE": {
-          const { error } = await supabase.from("game_rooms").upsert(
-            {
-              id: session.id,
-              game_kind: session.gameKind,
-              status: session.status,
-              player_black_token: session.playerBlackToken,
-              player_white_token: session.playerWhiteToken,
-              current_turn: session.currentTurn,
-              turn_number: session.turnNumber,
-              board_snapshot: session.boardSnapshot,
-              winner: session.winner,
-              version: session.version,
-              created_at: new Date(session.createdAt).toISOString(),
-              updated_at: new Date(session.updatedAt).toISOString(),
-            },
-            { onConflict: "id", ignoreDuplicates: true }
-          );
-          if (error) throw error;
-          break;
-        }
-
-        case "MOVE": {
-          const moveData = item.payload as MoveRecord;
-          const playerToken =
-            moveData.player === "black" ? session.playerBlackToken : session.playerWhiteToken;
-
-          if (!playerToken) {
-            throw new Error("Missing seated player token for authorized move execution");
-          }
-
-          const { data: rpcResult, error: rpcError } = await supabase.rpc("submit_turn_move", {
-            p_room_id: session.id,
-            p_player_token: playerToken,
-            p_expected_version: session.version,
-            p_move_id: moveData.id,
-            p_ply: moveData.ply,
-            p_player: moveData.player,
-            p_from_coord: moveData.from ?? null,
-            p_to_coord: moveData.to,
-            p_payload: moveData.payload ?? null,
-            p_board_snapshot: session.boardSnapshot,
-            p_winner: session.winner,
-            p_status: session.status,
-          });
-
-          if (rpcError) throw rpcError;
-
-          if (rpcResult !== "success") {
-            await localDb.games.update(item.gameId, { syncState: "conflict" });
-
-            const isTransientConflict = rpcResult === "version_conflict";
-            if (isTransientConflict && item.retryCount < 3) {
-              await localDb.syncQueue.update(item.id, { retryCount: item.retryCount + 1 });
-            } else {
-              // Terminal failure (unauthorized, room closed/not found, or retry exhausted): drop from queue
-              await localDb.syncQueue.delete(item.id);
-            }
-            continue;
-          }
-
-          await localDb.games.update(item.gameId, {
-            syncState: "synced",
-            version: session.version + 1,
-          });
-          break;
-        }
-
-        case "RESIGN":
-        case "RESET": {
-          const { data: updatedRoom, error: updateError } = await supabase
-            .from("game_rooms")
-            .update({
-              board_snapshot: session.boardSnapshot,
-              status: session.status,
-              winner: session.winner,
-              current_turn: session.currentTurn,
-              version: session.version + 1,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", item.gameId)
-            .eq("version", session.version)
-            .select("version");
-
-          if (updateError) throw updateError;
-
-          if (!updatedRoom || updatedRoom.length === 0) {
-            await localDb.games.update(item.gameId, { syncState: "conflict" });
-            await localDb.syncQueue.update(item.id, { retryCount: item.retryCount + 1 });
-            continue;
-          }
-
-          await localDb.games.update(item.gameId, {
-            syncState: "synced",
-            version: session.version + 1,
-          });
-          break;
-        }
-      }
-
-      await localDb.syncQueue.delete(item.id);
-    } catch (error: unknown) {
-      if (isNetworkError(error)) {
-        // Network outages are transient: preserve queue item and retryCount intact until connectivity restores
-        break;
-      }
-
-      const nextRetryCount = item.retryCount + 1;
-      if (nextRetryCount >= 3) {
-        await localDb.syncQueue.delete(item.id);
-        await localDb.games.update(item.gameId, { syncState: "conflict" });
-      } else {
-        await localDb.syncQueue.update(item.id, { retryCount: nextRetryCount });
-      }
-
-      continue;
-    }
+  button, .ant-btn, .ant-table-row {
+    min-height: 44px;
   }
 }
 ```
 
 ---
 
-## Section 4: 5-Phase Sequential Queue
+## 5. Sequential Execution Queue
 
 ### Phase 1: Types, Storage/API Client Config, and Base Utilities
-1. Write full TypeScript types for board states, moves, session lifecycle, and network state in `src/engine/types.ts`. Include `extractTypedBoard` and safe coordinate/cell extraction utilities `getBoardCell`.
-2. Configure Dexie.js database schema in `src/lib/db.ts` and install `dexie-react-hooks` (`useLiveQuery`) for reactive components.
-3. Configure Supabase client in `src/lib/supabase.ts` with mandatory runtime checks on `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-4. Implement `dispatchMoveMutation`, `flushSyncQueue`, and `isNetworkError` in `src/lib/sync.ts`.
+*   [ ] **1.1 Interface Definition**: Create `src/app/core/models/crm.models.ts` with complete definitions for `Account`, `Contact`, `Opportunity`, `OpportunityView`, `Activity`, `Address`, `WorkspaceTab`, and corresponding enums and forms (`AccountFormModel`, `ContactFormModel`, `OpportunityFormModel`, `ActivityFormModel`).
+*   [ ] **1.2 Pipeline & Financial Utilities**: Implement `src/app/core/utils/pipeline-calc.ts` containing stage probabilities, revenue calculations, `toLocalDateOnly`, stage progression rules, win-rate calculations, and weighted forecast calculations.
+*   [ ] **1.2.1 Resilient ID Generator**: Implement `src/app/core/utils/uuid.ts` exporting `generateId(): UUID` supporting `crypto.randomUUID()` with fallback to `crypto.getRandomValues()`.
+*   [ ] **1.3 Mock Seed Fixture**: Create `src/app/core/fixtures/mock-crm-data.ts` with deterministic UUIDs and `version: 1`, seeding 10 Accounts, 25 Contacts (enforcing 1 primary per account), 15 Opportunities (with valid contact-account linkage), and 40 Activities.
+*   [ ] **1.4 Viewport & Responsive Service**: Implement `src/app/core/services/viewport.service.ts` exposing `isMobile`, `isTablet`, `isDesktop`, and `isCoarsePointer` signals using CDK `BreakpointObserver`.
+*   [ ] **1.5 Storage Tokens & Storage Engine**: Implement `src/app/core/tokens/crm-storage.token.ts` and `src/app/core/services/crm-storage.service.ts`. Expose public API: `load<T>(key: string): T | null`, `save<T>(key: string, data: T): void`, `changes$: Observable<{ key: string; value: unknown }>`, and `migrate(): void`. Provide memory-backed fallback when storage is inaccessible. Implement BroadcastChannel multi-window synchronization (higher `version` wins per `id`), QuotaExceededError handling, and schema migrations.
+*   [ ] **1.6 Data Access Repository**: Implement `src/app/core/services/crm-repository.service.ts` managing Signals for Accounts, Contacts, Opportunities, and Activities. Expose `computed` `opportunitiesWithDerived: Signal<OpportunityView[]>` and `allEntityIds: Signal<Set<UUID>>`. Enforce domain rules without referencing `WorkspaceTabService`:
+    *   Optimistic locking: `update(id, patch, expectedVersion)` verifies version match and increments version by 1; on mismatch, throws `ConflictError`.
+    *   Stage transition validation: `updateOpportunityStage(id, stage, expectedVersion, lossReason?)` executes `validateStageTransition`; if invalid, throws `StageTransitionError`.
+    *   Contact invariants: Setting a contact to `isPrimary: true` automatically unsets `isPrimary` on all sibling contacts of the same account. Deleting a contact is blocked if referenced as `primaryContactId` by open Opportunities; if deleting the primary contact when other contacts exist, require explicit re-assignment first.
+    *   Activity date invariants: Setting status `COMPLETED` sets `completedDate` to current timestamp; un-completing sets `completedDate = null`.
+    *   Cascade deletes order: Deleting an Account first removes linked Opportunities (cascading Opportunity Activities), then Contact Activities, then Contacts, and finally the Account itself.
 
 ### Phase 2: Design Foundation & Atomic UI Primitives
-1. Configure Tailwind CSS v4 tokens directly in `src/app/globals.css` using the `@theme` directive (e.g. `--color-board-dark: #1A1A1A;`, `--color-board-light: #FFFFFF;`, hairline borders `#E5E5E5`) under `@import "tailwindcss";` without v3 config files.
-2. Build `BoardTile.tsx` supporting standard dimensions, touch-hold suppression, and focus rings.
-3. Build `Button.tsx` and `SegmentedControl.tsx` for zero-clutter switches (Local vs Realtime).
-4. Implement `NetworkIndicator.tsx` using `navigator.onLine` and realtime socket connection states.
-5. Create accessible modal wrapper `Modal.tsx` for match resolution states without external icon libraries.
+*   [ ] **2.1 High-Density CSS System**: Create `src/styles/_theme-variables.scss` and `src/styles/_density-overrides.scss`. Wire both into `src/styles.scss` via `@use`. Gate density overrides under `@media (pointer: fine) and (min-width: 1024px)`. Enforce 44px touch-safe targets and 16px input font under `@media (pointer: coarse)`.
+*   [ ] **2.2 Compact Badge Component**: Create `src/app/shared/ui/compact-badge/compact-badge.component.ts` supporting semantic color codes for priority and status states.
+*   [ ] **2.3 Metric Chip Component**: Create `src/app/shared/ui/metric-chip/metric-chip.component.ts` for record banners showing condensed financial values and count metrics.
+*   [ ] **2.4 Opportunity Stage Path Component**: Create `src/app/shared/ui/stage-path/stage-path.component.ts` and `.scss` rendering responsive chevron stage ribbons with direct click transitions and terminal status triggers.
+*   [ ] **2.5 Custom Pipes**: Create `src/app/shared/pipes/currency-formatter.pipe.ts` (USD compact millions/thousands formatting) and `src/app/shared/pipes/stage-color.pipe.ts` (hex/token resolution per stage).
 
 ### Phase 3: Compound Molecules & Feature Components
-1. Construct `GameShell.tsx` responsive layout framework. Explicitly enforce viewport boundaries: stack elements vertically on mobile (`flex-col` on `< 768px`) with the side panel collapsed underneath the active board or inside a bottom drawer, switching to a side-by-side split (`flex-row`) only at `>= 768px`.
-2. Build `TicTacToeBoardView.tsx` with high-density lines and tactile SVG markers.
-3. Build `ConnectFourBoardView.tsx` with column drop targets and mobile tap zones.
-4. Build `GomokuBoardView.tsx` handling 15x15 intersection coordinates with touch tolerance.
-5. Build `ReversiBoardView.tsx` featuring visual dots for legal disc placement indicators.
-6. Build `CheckersBoardView.tsx` with a two-tone cell grid and piece markers, and `HexBoardView.tsx` as a rhombus: seven rows of seven, each row shifted half a cell right of the one above. The board is 10 cell-widths across and 7 tall, so every row is 70% of the board width and row `y` starts at `y * 5%` — all fractions of the board, never pixels, so the rhombus survives any resize. **All 49 cells carry explicit boundary styling at all times** (`rounded-full border border-neutral-300 bg-neutral-100/80`): an empty Hex cell with a transparent background and no border is invisible against the canvas, which hides 40+ legal moves at a stroke. The four goal rails are captioned rather than drawn bare, because a rail on its own says *which* edges and not *whose* — Black's top and bottom, White's left and right, each with arrows pointing inwards at the edge its own caption names.
-7. Construct `MoveHistoryTimeline.tsx` displaying plies in algebraic or coordinate notation.
+*   [ ] **3.1 Dense Table Toolbar**: Create `src/app/shared/ui/dense-table-toolbar/dense-table-toolbar.component.ts` featuring search input, filter popover trigger, column visibility picker, and density switcher.
+*   [ ] **3.2 Activity Timeline Feed**: Create `src/app/shared/ui/activity-timeline/activity-timeline.component.ts` and `.scss` rendering logged tasks/calls/notes with instant check-to-complete toggles.
+*   [ ] **3.3 Activity Action Composer**: Create `src/app/features/activities/activity-composer/activity-composer.component.ts` tabbed widget for Log a Call, Create Task, Add Note with validation and immediate signal store propagation.
+*   [ ] **3.4 Entity Related-Lists Card**: Create `src/app/shared/ui/related-entity-card/related-entity-card.component.ts` and `.scss` displaying compact linked sub-grids with inline quick-add action triggers.
+*   [ ] **3.5 Record Banner Header**: Create `src/app/shared/ui/record-banner/record-banner.component.ts` and `.scss` supporting entity icons, 2-to-4 column responsive metric chips, and an action button cluster.
+*   [ ] **3.6 Quick Create Drawer**: Create `src/app/shared/ui/quick-create-drawer/quick-create-drawer.component.ts` and `.scss` implementing dynamic entity creation and editing (`mode: 'create' | 'edit'`, `recordId`) for Accounts, Contacts, Opportunities, and Activities.
 
-### Phase 4: Domain Logic, Reactive State, and Specialized APIs
-1. Implement rule engines: `tictactoe.ts`, `connect4.ts`, `gomoku.ts`, `reversi.ts`, `checkers.ts`, and `hex.ts`.
-2. Build custom hook `useGameSession.ts` exposing unified dispatcher `makeMove(from?, to)`.
-3. Build `useOfflineSync.ts` managing `Dexie` write-through mutations and retry loops.
-4. Build `useSupabaseRealtime.ts` subscribing to `game_moves` CDC inserts. On move arrival, replays coordinates through the corresponding rule engine (`engine/rules/*.ts`) against the prior verified board (for Checkers, re-derives `jumpedCoord: { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }` when `Math.abs(to.y - from.y) === 2`). If the locally recomputed board differs from the broadcast `board_snapshot`, sets `syncState: 'conflict'`, halts play, and renders an invalid-state warning modal via `GameOverDialog`. On initial load or reconnect, sequentially replays all historical moves from `game_moves` in-memory (< 250 moves per complete session, executes synchronously in < 2ms) to verify snapshot integrity before mounting board interaction.
-5. Implement sound trigger utility using the native Web Audio API (zero audio file dependencies, pure synth pulses).
+### Phase 4: Domain Logic, Reactive State, and Specialized Workflows
+*   [ ] **4.1 Workspace Tab Service**: Implement `src/app/core/services/workspace-tab.service.ts` to manage multi-document tabs, tab switching, subtab state updates, close validation with `NzModalService`, dirty state, and sessionStorage persistence.
+*   [ ] **4.2 Opportunity Lifecycle Engine**: Integrate `src/app/core/utils/pipeline-calc.ts` with repository workflows, validating stage transitions, enforcing `applyStageTransition` with `toLocalDateOnly()`, handling closed-lost reason persistence, and recalculating forecast metrics.
+*   [ ] **4.3 Multi-Criteria Filtering Engine**: Implement `src/app/core/utils/filter-evaluator.ts` exposing `evaluateCriteria` supporting nested path access, ISO-date awareness, empty/non-empty operations, and antisymmetric multi-column sorting with `{ numeric: true }`.
+*   [ ] **4.4 Keyboard Shortcut Service**: Implement `src/app/core/services/keyboard-shortcut.service.ts` listening to `keydown` events via `fromEvent<KeyboardEvent>(document, 'keydown')`. Match physical key `event.code === 'KeyW'` with `event.altKey && event.shiftKey` for tab close, `(event.ctrlKey || event.metaKey) && event.code === 'KeyS'` (calling `preventDefault()`) for save, and `event.key === '/'` for search (suppressed when target is an input field). Expose `saveRequested$`, `searchFocusRequested$`, and `tabCloseRequested$` observables.
 
 ### Phase 5: Complete Page/Screen Assembly & Responsive Shell
-1. Assemble route `/` with 6-game selector matrix and local vs realtime mode toggles.
-2. Assemble parameterized game routes `/[gameKind]` with auto-instantiation in Dexie.
-3. Assemble multiplayer routes `/[gameKind]/[roomId]` connecting local state with Supabase Realtime channel broadcast.
-4. Validate responsive layouts across screen viewports:
-   - 360px (compact mobile): Side panel stacks directly below active board (`flex-col` layout below `md: 768px`). Gomoku 15x15 visual grid cells shrink to ~22px while touch targets are decoupled using an invisible tap intercept overlay. `MoveHistoryTimeline` constrained with `overflow-y-auto max-h-36`.
-   - 390px / 430px (modern mobile): Full-width constrained square board (`max-w-[calc(100vw-2rem)]`), history accordion collapsible.
-   - 768px (tablet): Two-column layout with inline history drawer, vertical scroll max-height 480px, side-by-side player indicators.
-   - 1024px+ (desktop): Centered fixed board canvas with persistent side rail.
-5. Build `BoardStage.tsx` as the rigid canvas every board renders inside. Two boxes, not one, because the guarantee needs to be structural rather than a promise each of the six views has to keep: the **frame** is a viewport-derived box with `overflow-hidden` that cannot respond to its contents, and the **canvas** inside it is a plain centring flex box. One entry per kind reserves the space *before* the board is measured, so the ratio a board draws itself at and the ratio the space was reserved for cannot drift apart:
-
-   ```typescript
-   const STAGE_ASPECT_RATIO: Readonly<Record<GameKind, string>> = {
-     tictactoe: "1 / 1",
-     connect4: "7 / 6",   // 7 cells wide by 6 tall
-     gomoku: "1 / 1",
-     reversi: "1 / 1",
-     checkers: "1 / 1",
-     hex: "10 / 7",       // the rhombus: 7 cells + 6 half-cell offsets
-   };
-   ```
-
-   Hex is the ratio that is easy to get wrong. A square frame around a 10:7 rhombus wastes three tenths of the height on every screen — on a 360x640 phone that is the difference between a board that fits and one that pushes the score cards off — and a frame *tighter* than the playfield clips the bottom goal rail instead.
-6. The match review banner is **non-blocking**. A finished board is the one board state a player most wants to look at, so the result is presented as a dismissible banner plus an explicit winner card naming the seat and the colour — never as a modal that takes the board away. The board keeps its winning-line highlight while the banner is up, because the highlight and the review answer the same question from two sides and a player who is looking at the board wants both.
-7. Test offline disconnection, Docker Supabase reconnect, optimistic concurrency control version conflicts, and Dexie queue drain.
+*   [ ] **5.1 Console Navigation & Utility Bar**: Create `src/app/features/workspace/components/console-tab-bar/console-tab-bar.component.ts` (tabs with dirty indicator dots, overflow menu) and `src/app/features/workspace/components/utility-bar/utility-bar.component.ts` (sticky status bar with quick-create action triggers).
+*   [ ] **5.2 Pipeline Dashboard Component**: Implement `src/app/features/workspace/pipeline-dashboard/pipeline-dashboard.component.ts` and `.scss` rendering key metrics cards (Total Pipeline Value, Weighted Forecast, Win Rate, Stage Breakdown) using pure CSS progress bars without third-party chart dependencies.
+*   [ ] **5.3 Account Detail Workspace**: Assemble `src/app/features/accounts/account-detail/account-detail.component.ts` and `.scss` with split pane layout (Account fields + Contacts grid on left, Activities + Opportunities on right) and reactive form dirty tracking calling `tabService.setTabDirty`.
+*   [ ] **5.4 Opportunity Detail Workspace**: Assemble `src/app/features/opportunities/opportunity-detail/opportunity-detail.component.ts` and `.scss` alongside `src/app/features/opportunities/components/loss-reason-modal/loss-reason-modal.component.ts`. Integrate Stage Chevron Path with `applyStageTransition`, Loss Reason modal on `CLOSED_LOST`, Activity Composer, and Related Lists.
+*   [ ] **5.5 Enterprise Data Grids**: Implement `AccountListComponent` and `OpportunityListComponent` utilizing standard NG-ZORRO compact tables (`nzSize="small"`) with dense client-side pagination (`pageSize: 25`), multi-column sorting, and responsive card swapping below 768px.
+*   [ ] **5.6 Responsive Mobile Adaptation**: Implement off-canvas drawer mode for right utility panes and dropdown selector for console tabs below 768px.
+*   [ ] **5.7 Main Shell & Root Integration**: Assemble `WorkspaceShellComponent` with keep-alive tab outlet mapping (`@for` with `[hidden]`), instantiate a single `QuickCreateDrawerComponent` wired to `UtilityBarComponent.quickActionClick`, and establish an Angular effect linking `repository.allEntityIds()` to `tabService.pruneMissingEntities()`. Finally, update `src/app/app.component.ts` to mount `<app-workspace-shell />`.

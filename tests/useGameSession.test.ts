@@ -45,6 +45,78 @@ afterEach(async () => {
 });
 
 describe("useGameSession on a place-a-stone game", () => {
+  it("clears the winning line when a finished match is reset", async () => {
+    // The reset is a shallow copy — `{ ...active, status: "active", winner:
+    // null }` — so every field it does not name survives into the new match.
+    // `winningLine` is one of them, and it is the one field that survives
+    // *visibly*: the next game opens on an empty nine-cell board wearing the
+    // last game's three green tiles, which reads as a line nobody played.
+    //
+    // Driven end to end rather than by seeding the session, so the win has to be
+    // a real one and the reset has to be the real handler.
+    const initial = localSession();
+    const { result } = renderHook(() => useGameSession(initial));
+
+    // Black takes the left column: (0,0), (0,1), (0,2). White plays elsewhere so
+    // the column is never contested.
+    for (const coord of [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: 1, y: 1 },
+      { x: 0, y: 2 },
+    ] as Coordinates[]) {
+      await act(async () => {
+        await result.current.makeMove(coord);
+      });
+    }
+
+    // The line is really there first, or the assertion below proves nothing.
+    expect(result.current.session?.status).not.toBe("active");
+    expect(result.current.session?.winner).toBe("black");
+    expect(result.current.session?.winningLine).toHaveLength(3);
+
+    await act(async () => {
+      await result.current.resetGame();
+    });
+
+    const after = result.current.session;
+    expect(after?.status).toBe("active");
+    expect(after?.winner).toBeNull();
+    // The three that must not survive the reset.
+    expect(after?.winningLine).toBeNull();
+    // And the rest of the opening position, so this is a clean board and not a
+    // board with one tile left lit.
+    expect(after?.history).toHaveLength(0);
+    expect(after?.turnNumber).toBe(0);
+    expect(after?.boardSnapshot).toEqual(getSessionEngine("tictactoe").createInitialBoard());
+  });
+
+  it("clears the winning line on a resignation, which has no line to keep", async () => {
+    // The other terminal path, and a different mistake. A resignation is
+    // decided by a player rather than by a row of stones, so there is no line
+    // to report — but the session is built by spreading a *live* one, so a line
+    // set moments before the resignation would otherwise be carried into a
+    // finished match and shown as the thing that decided it.
+    const initial = localSession();
+    const { result } = renderHook(() => useGameSession(initial));
+
+    await act(async () => {
+      await result.current.makeMove({ x: 0, y: 0 });
+    });
+    // A single move completes no line, so this is the honest way to get a
+    // non-null line onto a session that is still active.
+    expect(result.current.session?.winningLine).toBeNull();
+
+    await act(async () => {
+      await result.current.resign();
+    });
+
+    expect(result.current.session?.status).not.toBe("active");
+    expect(result.current.session?.winner).toBe("white");
+    expect(result.current.session?.winningLine).toBeNull();
+  });
+
   it("accepts a move on an empty board and records it", async () => {
     const initial = localSession();
     const { result } = renderHook(() => useGameSession(initial));

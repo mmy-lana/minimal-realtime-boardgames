@@ -1877,6 +1877,47 @@ describe("the winning line", () => {
     expect(keys(win.winningLine)).toEqual(["0,0", "1,0", "2,0"]);
   });
 
+  it("never matches a line whose cells are all empty", () => {
+    // The other half of the guard, and a separate failure mode from the stale
+    // line above. Scoping the search to the mark just played stops the search
+    // reporting a line somebody else finished; it does nothing about the
+    // predicate itself. Written as `board[a] === board[b] && board[b] ===
+    // board[c]` — the natural way to say "is this triple full" — an all-empty
+    // line satisfies it, and the first such line in the table is `[0, 3, 6]`,
+    // column 0. So an empty board declares a winner and paints a column that
+    // contains nothing at all.
+    //
+    // Asserted for the empty board, for the half-empty column the report
+    // actually shows, and for a line that is full of the *opponent's* colour,
+    // because all three are the same mistake wearing different clothes.
+    const empty = createInitialTicTacToeBoard();
+    expect(findTicTacToeWinningLine(empty)).toBeNull();
+
+    //     0 | 1 | 2
+    //     3 | 4 | 5       O
+    //     6 | 7 | 8
+    // Column 0 reads `[empty, O, empty]` and the row 1 line reads `[O, —, —]`.
+    // Neither is full; a missing null guard would take column 0 first.
+    const halfEmptyColumn: TicTacToeBoard = [
+      null,   null, null,
+      "white", null, null,
+      null,   null, null,
+    ];
+    expect(findTicTacToeWinningLine(halfEmptyColumn)).toBeNull();
+    expect(findTicTacToeWinningLine(halfEmptyColumn, 0)).toBeNull();
+    expect(findTicTacToeWinningLine(halfEmptyColumn, 3)).toBeNull();
+    expect(findTicTacToeWinningLine(halfEmptyColumn, 6)).toBeNull();
+
+    // A real line of one colour is still found, so the null guard is a guard and
+    // not a veto: the search still has to be able to say yes.
+    const fullColumn: TicTacToeBoard = [
+      "black", null, null,
+      "black", null, null,
+      "black", null, null,
+    ];
+    expect(findTicTacToeWinningLine(fullColumn)).toEqual([0, 3, 6]);
+  });
+
   it("does not award a win for a line that some earlier move completed", () => {
     // The regression this file exists for.
     //
