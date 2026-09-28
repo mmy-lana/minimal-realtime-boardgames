@@ -480,6 +480,78 @@ describe("board sizing", () => {
     unmount();
   });
 
+  it("draws a Tic-Tac-Toe grid with its lines in the gap, not the cells", async () => {
+    const { TicTacToeBoardView } = await import("@/components/boards/TicTacToeBoardView");
+    const { container, unmount } = render(
+      <TicTacToeBoardView
+        board={getSessionEngine("tictactoe").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Tic-Tac-Toe board"
+        size="md"
+      />
+    );
+
+    const board = container.querySelector('[role="grid"]') as HTMLElement;
+    expect(board.style.aspectRatio).toBe("1 / 1");
+    expect(board.className).toContain("max-w-[480px]");
+    // The grid lines are the gap showing the frame through. This is why no tile
+    // needs a border of its own.
+    expect(board.className).toContain("gap-3");
+
+    const tiles = container.querySelectorAll("[data-board-surface]");
+    expect(tiles).toHaveLength(9);
+    // One fill for all nine. A checkerboard implies the grid by alternating
+    // colours, which is what made this read as nine loose marks.
+    for (const tile of tiles) expect(tile.className).toContain("bg-neutral-100");
+    unmount();
+  });
+
+  it("keeps a Tic-Tac-Toe mark legible on a light cell", async () => {
+    const { TicTacToeBoardView } = await import("@/components/boards/TicTacToeBoardView");
+    // A board with both marks on it, reached the way a real one is: two legal
+    // moves through the engine, not a hand-edited array.
+    const engine = getSessionEngine("tictactoe");
+    const afterX = engine.applyMove(engine.createInitialBoard(), { to: { x: 0, y: 0 } }, "black");
+    const board = engine.applyMove(afterX.board, { to: { x: 1, y: 1 } }, "white").board;
+    const { container, unmount } = render(
+      <TicTacToeBoardView
+        board={board}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Tic-Tac-Toe board"
+        size="md"
+      />
+    );
+
+    const strokes = [...container.querySelectorAll("svg g[stroke], svg circle[stroke]")];
+    expect(strokes).toHaveLength(2);
+    const colors = strokes.map((s) => s.getAttribute("stroke"));
+    // The bug: these were `board-dark`/`board-light` theme tokens chosen to
+    // contrast with the *page*, and the cells here are light. A white mark on a
+    // light cell is not there at all.
+    expect(colors).toContain("#111827");
+    expect(colors).toContain("#DC2626");
+    for (const color of colors) expect(color).not.toBe("var(--color-board-light)");
+
+    // Both marks are 65% of their cell, and the strokes are the same weight.
+    for (const mark of container.querySelectorAll("svg")) {
+      expect(mark.parentElement?.getAttribute("style")).toContain("65%");
+    }
+    for (const stroke of strokes) expect(stroke.getAttribute("stroke-width")).toBe("12");
+    unmount();
+  });
+
   it("gives Connect Four an exact 7:6 playfield with square cells", async () => {
     const { ConnectFourBoardView } = await import("@/components/boards/ConnectFourBoardView");
     const { container, unmount } = render(
