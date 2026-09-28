@@ -13,7 +13,7 @@
  * first, and it is much easier to believe in a file whose every line is about
  * one bug.
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import Dexie from "dexie";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -350,5 +350,91 @@ describe("REL-ERR-01: the recent-sessions boundary", () => {
       expect(screen.getByLabelText(new RegExp(`Play ${META[kind].name}`, "i"))).toBeTruthy();
     }
     consoleError.mockRestore();
+  });
+});
+
+/**
+ * The audit's acceptance criterion, asserted against the real component.
+ *
+ * Every test above proves a piece: that the accessor is total, that the filter
+ * drops bad rows, that the boundary catches a render fault. None of them render
+ * `app/page.tsx`, which is the thing that actually crashed. A regression that
+ * broke the route — a prop wired to a retired kind, a boundary removed from the
+ * page, an import that resolves differently in the route's module graph — would
+ * pass all of the above and still blank the site.
+ *
+ * The console is watched as well as the render. React 19 reports an error
+ * boundary's caught error through `console.error`, so a test that only checked
+ * the DOM would pass even if the page had rendered its failure card.
+ */
+describe("DATA-CRASH-01: the root route mounts on legacy data", () => {
+  beforeEach(async () => {
+    await getLocalDb().transaction("rw", getLocalDb().games, getLocalDb().syncQueue, async () => {
+      await getLocalDb().games.clear();
+      await getLocalDb().syncQueue.clear();
+    });
+  });
+
+  it("renders every game card with retired-kind rows present and no error", async () => {
+    // Rows written by the build that renamed "chess" to "hex", left behind in
+    // the user's browser. Nothing prunes them at this point — the migration
+    // runs on version change, and this database is already at the current
+    // version, which is exactly why the read path has to be total on its own.
+    await getLocalDb().games.bulkAdd([
+      // `as never` is the file's existing convention for this fixture, and the
+      // point of the fixture: a row whose `gameKind` is not a `GameKind` and so
+      // cannot satisfy the row type, which is the whole reason the read path
+      // has to be total.
+      legacyRow("legacy-chess", "chess") as never,
+      legacyRow("legacy-typo", "chekers") as never,
+      legacyRow("legacy-null", "") as never,
+      createGameSession({
+        id: "current-1",
+        gameKind: "checkers",
+        mode: "offline_local",
+        playerBlackToken: "t",
+      }),
+    ]);
+
+    // `app/page.tsx` has a default export only; the name is the component, not a binding.
+    const { default: HomePage } = await import("@/app/page");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    render(<HomePage />);
+
+    // The six cards are the page's whole purpose; a player who cannot start a
+    // game cannot use the site at all.
+    for (const kind of GAME_KINDS) {
+      expect(screen.getByLabelText(new RegExp(`Play ${GAME_METADATA[kind].name}`, "i"))).toBeTruthy();
+    }
+
+    // The one legitimate row still shows, proving the list rendered rather than
+    // being skipped, and the three bad ones are dropped rather than blanking it.
+    // The row carries the game name and a link, not the id, so the id is checked
+    // through the href the row builds from it.
+    // The section exists immediately and renders its empty state until the
+    // live query settles, so the wait is on the row rather than on the section.
+    const recent = screen.getByRole("region", { name: "Recent sessions" });
+    await waitFor(() => expect(within(recent).getAllByRole("listitem").length).toBeGreaterThan(0));
+    const rows = within(recent).getAllByRole("listitem");
+    expect(rows).toHaveLength(1);
+    const href = within(rows[0]).getByRole("link").getAttribute("href");
+    expect(href).toContain("current-1");
+    expect(href).toContain("checkers");
+    for (const dropped of ["legacy-chess", "legacy-typo", "legacy-null"]) {
+      expect(within(recent).queryByText(new RegExp(dropped))).toBeNull();
+    }
+
+    // No boundary anywhere in the route caught anything, or warned about it.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const messages = [...consoleError.mock.calls, ...consoleWarn.mock.calls]
+      .map((call) => String(call[0]))
+      .join("\n");
+    expect(messages).toBe("");
+
+    consoleError.mockRestore();
+    consoleWarn.mockRestore();
   });
 });
