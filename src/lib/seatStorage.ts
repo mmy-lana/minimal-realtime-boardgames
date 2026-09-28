@@ -42,22 +42,61 @@ export function opponentTokenKey(roomId: string): string {
   return `${SEAT_STORAGE_NAMESPACE}:room:${roomId}:opponent`;
 }
 
-/** Reads a session-storage value without assuming a browser environment. */
+/**
+ * Values held only in memory because `sessionStorage` refused to store them.
+ *
+ * This is not a convenience cache. When `sessionStorage` throws — Safari in
+ * private mode, a browser with site data disabled, a third-party iframe with
+ * storage partitioned away — a seat token written by the lobby is discarded on
+ * the spot, and the next read of it mints a *different* one. On the server that
+ * is not a no-op: the host opens their own invite link, `join_room` is called
+ * with a token that matches neither seat, the room is still `waiting` with an
+ * empty white seat, and the host is seated as the second player in a game they
+ * started. The room is then full and nobody can play it.
+ *
+ * An in-memory map is not a substitute for real storage — it does not survive a
+ * reload, and a link opened in a new tab still gets nothing. It is scoped
+ * exactly to what it can fix: the token is written and read within one page
+ * session, by the same document, and losing it there is what breaks the room.
+ */
+const memoryFallback = new Map<string, string>();
+
+/**
+ * Reads a session-storage value without assuming a browser environment, and
+ * falls back to the in-memory copy when storage is unavailable or refused.
+ *
+ * `sessionStorage` is consulted first and the memory copy second, so a working
+ * storage is always the source of truth. The fallback also covers the partial
+ * case where a write reached memory but not storage, which a single `try` around
+ * the read cannot distinguish from a value that was never written.
+ */
 export function readSessionValue(key: string): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return window.sessionStorage.getItem(key);
+    return window.sessionStorage.getItem(key) ?? memoryFallback.get(key) ?? null;
   } catch {
     // Safari in private mode throws on any `sessionStorage` access rather than
     // returning null. A room that cannot remember its seat is still playable —
     // it just re-claims one on the next visit.
-    return null;
+    return memoryFallback.get(key) ?? null;
   }
 }
 
-/** Writes a session-storage value, tolerating a browser that refuses to store. */
+/**
+ * Writes a session-storage value, tolerating a browser that refuses to store.
+ *
+ * The memory copy is written unconditionally, on both the success and the
+ * failure path. Writing it only on failure would let the two disagree in the
+ * other direction — an earlier value in memory that a later successful write
+ * has already replaced — and a read would then hand back a stale seat.
+ */
 export function writeSessionValue(key: string, value: string): void {
+  // The environment check comes before the map is touched, not after. A server
+  // process shares this module across every request it renders, so populating
+  // the map there would grow it without bound and hold one visitor's seat token
+  // in memory while another's page is being rendered. It is browser state only.
   if (typeof window === "undefined") return;
+  memoryFallback.set(key, value);
   try {
     window.sessionStorage.setItem(key, value);
   } catch {
