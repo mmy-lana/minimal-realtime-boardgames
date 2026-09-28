@@ -481,6 +481,104 @@ describe("board sizing", () => {
     // they are how you find the centre and the quarters by eye.
     const hoshi = container.querySelectorAll(".bg-\\[\\#4A3718\\]");
     expect(hoshi).toHaveLength(5);
+
+    // Five dots is not the same as the five *right* dots. They are placed from
+    // the centre of a 15x15 board, so a set written as literals that drifted by
+    // one row would still render five of them and still pass a count.
+    const tiles = [...container.querySelectorAll("[data-board-surface]")];
+    expect(tiles).toHaveLength(15 * 15);
+    const at = (x: number, y: number) => tiles[y * 15 + x]!;
+    for (const [x, y] of [
+      [3, 3],
+      [11, 3],
+      [7, 7],
+      [3, 11],
+      [11, 11],
+    ] as const) {
+      const dot = at(x, y).querySelector(".bg-\\[\\#4A3718\\]");
+      expect(dot, `no star point at ${x},${y}`).not.toBeNull();
+    }
+    // And nowhere else: the corners and the edges of a 15x15 board are plain.
+    for (const [x, y] of [
+      [0, 0],
+      [14, 0],
+      [0, 14],
+      [14, 14],
+      [7, 0],
+      [0, 7],
+    ] as const) {
+      expect(at(x, y).querySelector(".bg-\\[\\#4A3718\\]"), `a star point at ${x},${y}`).toBeNull();
+    }
+    unmount();
+  });
+
+  it("previews a Gomoku stone on the one intersection under the pointer, and no other", async () => {
+    // 225 empty intersections, every one of them legal. A marker per legal
+    // square would put a ghost on the whole board, and a ghost that stayed where
+    // it was last drawn would put it on the wrong one — a preview of a move
+    // nobody is making. So: exactly one ghost, and it follows the pointer.
+    const { GomokuBoardView } = await import("@/components/boards/GomokuBoardView");
+    const engine = getSessionEngine("gomoku");
+    const played = engine.applyMove(engine.createInitialBoard(), { to: { x: 7, y: 7 } }, "black").board;
+    const { container, unmount } = render(
+      <GomokuBoardView
+        board={played}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>(["2,3", "13,4", "7,7"])}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>(["2,3", "13,4", "7,7"])}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Gomoku board"
+        size="sm"
+      />
+    );
+
+    const grid = container.querySelector("[data-board-surface]")?.parentElement;
+    expect(grid).not.toBeNull();
+    // jsdom has no layout, so the board is given one: 300px square, 20px cells.
+    Object.defineProperty(grid as Element, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, width: 300, height: 300, right: 300, bottom: 300 }),
+    });
+    const tiles = [...container.querySelectorAll("[data-board-surface]")];
+    const at = (x: number, y: number) => tiles[y * 15 + x]!;
+    const ghosts = () =>
+      [...container.querySelectorAll('[aria-hidden="true"]')].filter((node) =>
+        (node as HTMLElement).className.includes("animate-pulse")
+      );
+
+    // Nothing is previewed before the pointer arrives.
+    expect(ghosts()).toHaveLength(0);
+
+    // The pointer over c4 — a legal, empty intersection.
+    fireEvent.pointerMove(at(2, 3), { clientX: 50, clientY: 70 });
+    const previewed = ghosts();
+    expect(previewed).toHaveLength(1);
+    expect(previewed[0]!.closest("[data-board-surface]")).toBe(at(2, 3));
+    // Dashed, so it reads as a suggestion rather than as a stone already played.
+    expect((previewed[0] as HTMLElement).className).toContain("border-dashed");
+
+    // It follows the pointer to the next intersection rather than lingering.
+    fireEvent.pointerMove(at(13, 4), { clientX: 274, clientY: 90 });
+    expect(ghosts()).toHaveLength(1);
+    expect(ghosts()[0]!.closest("[data-board-surface]")).toBe(at(13, 4));
+
+    // An intersection that is not on offer draws no ghost at all, even with the
+    // pointer on it: a preview of a move the session will refuse.
+    fireEvent.pointerMove(at(5, 5), { clientX: 110, clientY: 110 });
+    expect(ghosts()).toHaveLength(0);
+
+    // A stone: there is nothing to preview on top of.
+    fireEvent.pointerMove(at(7, 7), { clientX: 150, clientY: 150 });
+    expect(ghosts()).toHaveLength(0);
+
+    // And leaving the square takes the preview with it.
+    fireEvent.pointerMove(at(2, 3), { clientX: 50, clientY: 70 });
+    expect(ghosts()).toHaveLength(1);
+    fireEvent.pointerLeave(at(2, 3));
+    expect(ghosts()).toHaveLength(0);
     unmount();
   });
 
@@ -1266,6 +1364,79 @@ describe("board sizing", () => {
     expect(ghosts[0].className).toMatch(/bg-white\/20/);
 
     fireEvent.mouseLeave(column);
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
+    unmount();
+  });
+
+  it("previews a Connect Four drop in the slot the disc actually falls into", async () => {
+    // The preview has one job: say where the disc will land. On a column that
+    // already holds two discs that is the third slot from the bottom — not the
+    // top of the column, not the middle of it, and not the first empty row read
+    // from the top. A preview drawn anywhere else is worse than none, because
+    // it is believed.
+    const { ConnectFourBoardView } = await import("@/components/boards/ConnectFourBoardView");
+    const engine = getSessionEngine("connect4");
+    let board = engine.createInitialBoard();
+    board = engine.applyMove(board, { to: { x: 3, y: 5 } }, "black").board;
+    board = engine.applyMove(board, { to: { x: 3, y: 4 } }, "white").board;
+
+    const { container, unmount } = render(
+      <ConnectFourBoardView
+        board={board}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>(["3,3", "0,5"])}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Connect Four board"
+      />
+    );
+
+    // Row 0 is the top, so the landing row is 3 and the column's own label says
+    // the same thing in words — the preview and the announcement agree.
+    const column = screen.getByRole("button", { name: /Column 4,/ });
+    expect(column.getAttribute("aria-label")).toBe("Column 4, drop a disc in row 3 from the top");
+
+    const playfield = container.querySelector("[data-c4-playfield]") as HTMLElement;
+    const columns = [...playfield.children] as HTMLElement[];
+    expect(columns).toHaveLength(7);
+    const socketsOf = (index: number) => [
+      ...columns[index]!.querySelectorAll(".bg-slate-950"),
+    ];
+    const ghostIn = (index: number) =>
+      socketsOf(index).findIndex((socket) => socket.querySelector(".animate-pulse"));
+
+    fireEvent.mouseEnter(column);
+    const ghosts = container.querySelectorAll(".animate-pulse");
+    expect(ghosts).toHaveLength(1);
+    // The landing slot, in the column that was pointed at.
+    expect(ghostIn(3)).toBe(3);
+    // And in no other column. Matching the landing *row* alone lit up the socket
+    // of every column whose disc happened to fall on the same row, so aiming at
+    // one column drew up to six previews at once.
+    for (const index of [0, 1, 2, 4, 5, 6]) expect(ghostIn(index), `column ${index}`).toBe(-1);
+
+    // Legible on the socket it sits in. The socket is near-black, so a preview
+    // that is only a faint outline reads as a printing artefact; a light fill
+    // and a light rim make it unmistakable, and it is inert for the same reason
+    // every other decoration on this board is.
+    const ghost = ghosts[0] as HTMLElement;
+    expect(ghost.getAttribute("aria-hidden")).toBe("true");
+    expect(ghost.className).toMatch(/bg-white\//);
+    expect(ghost.className).toMatch(/border-white\//);
+    expect(ghost.className).toContain("rounded-full");
+
+    // Keyboard aiming gets the same preview as the pointer: the column is one
+    // tab stop, so a preview that only answered to a mouse left a keyboard
+    // player with nothing to aim by.
+    fireEvent.mouseLeave(column);
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
+    fireEvent.focus(column);
+    expect(container.querySelectorAll(".animate-pulse")).toHaveLength(1);
+    expect(ghostIn(3)).toBe(3);
+    fireEvent.blur(column);
     expect(container.querySelectorAll(".animate-pulse")).toHaveLength(0);
     unmount();
   });

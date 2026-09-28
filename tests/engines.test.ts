@@ -258,6 +258,38 @@ describe("tic-tac-toe engine", () => {
     }
   });
 
+  it("wins on a run of six as well as on a run of five", () => {
+    // Free-style gomoku: a run of five or more wins, and a count that stops at
+    // exactly five reports the ply that makes six as a game that continues.
+    const board = createInitialGomokuBoard();
+    for (const x of [0, 1, 2, 3, 5]) board[7]![x] = "black";
+    // White well clear of the line, so the only run on the board is black's.
+    board[8]![0] = "white";
+    board[8]![2] = "white";
+
+    const result = applyGomokuMove(board, { x: 4, y: 7 }, "black");
+    expect(result.nextBoard[7]?.slice(0, 6)).toEqual(Array(6).fill("black"));
+    expect(result.winner).toBe("black");
+    expect(result.isDraw).toBe(false);
+  });
+
+  it("does not join two runs across a gap", () => {
+    // Black at c7 and e7, white at d7. Playing f7 puts black on both sides of
+    // its own white stone, and a run counter that stepped over the interruption
+    // instead of stopping at it would call two stones a win.
+    const board = createInitialGomokuBoard();
+    board[7]![2] = "black";
+    board[7]![3] = "white";
+    board[7]![4] = "black";
+
+    const result = applyGomokuMove(board, { x: 5, y: 7 }, "black");
+    expect(result.winner).toBeNull();
+    expect(result.isDraw).toBe(false);
+    // The stone is played, and the white one in the middle of the line is still
+    // standing: the run stopped at the interruption rather than through it.
+    expect(result.nextBoard[7]?.slice(2, 6)).toEqual(["black", "white", "black", "black"]);
+  });
+
   it("does not mutate the input board", () => {
     const board = createInitialTicTacToeBoard();
     applyTicTacToeMove(board, 4, "black");
@@ -613,6 +645,50 @@ describe("connect four engine", () => {
     expect(result.winner).toBe("black");
   });
 
+  it("fills the lowest gap in a column, whatever sits above it", () => {
+    // Gravity is "the lowest free row", not "the first free row from the top"
+    // and not "the first free row from the bottom of the stack". A board with a
+    // hole in a column cannot arise from legal play, so a scan that walked the
+    // column from the top would only ever be caught here — and it would drop the
+    // disc into the gap, above the disc that is already sitting on the floor.
+    const board = createInitialConnect4Board();
+    board[5]![0] = "white";
+    board[3]![0] = "black";
+
+    expect(getConnect4LowestAvailableRow(board, 0)).toBe(4);
+    const result = applyConnect4Move(board, 0, "white");
+    expect(result.placedRow).toBe(4);
+    expect(result.nextBoard[4]![0]).toBe("white");
+    // The disc already in the column is where it was, not pushed up.
+    expect(result.nextBoard[3]![0]).toBe("black");
+    expect(result.nextBoard[5]![0]).toBe("white");
+  });
+
+  it("wins on a run of five as well as on a run of four", () => {
+    // A run of four or more wins, and a check written as "exactly four" is the
+    // one that passes every other test in this file: the fifth disc is dropped
+    // into a column that already holds a winning line, so the game would be
+    // called a draw on the ply that should have ended it.
+    let board = createInitialConnect4Board();
+    for (const [col, player] of [
+      [0, "black"],
+      [0, "white"],
+      [1, "black"],
+      [1, "white"],
+      [2, "black"],
+      [2, "white"],
+      [3, "black"],
+      [3, "white"],
+    ] as const) {
+      board = applyConnect4Move(board, col, player).nextBoard;
+    }
+
+    const result = applyConnect4Move(board, 4, "black");
+    expect(result.winner).toBe("black");
+    expect(result.placedRow).toBe(5);
+    expect(result.isDraw).toBe(false);
+  });
+
   it("does not treat a run of three as a win", () => {
     let board = createInitialConnect4Board();
     for (let i = 0; i < 3; i += 1) {
@@ -935,6 +1011,54 @@ describe("reversi engine", () => {
     expect(result.isDraw).toBe(false);
     // Black retains a legal move, so the game is not over.
     expect(getValidReversiMoves(result.nextBoard, "black")).toHaveLength(1);
+  });
+
+  it("decides the game by disc count when neither side can move, with squares still empty", () => {
+    // The rule is "when neither player can move", not "when the board is full",
+    // and a check written as the second one leaves the game with no result at
+    // all on a position where the last discs have just been flipped away. The
+    // position here is contrived — real play cannot produce it, because the two
+    // opening discs outlive every line of play — but the engine has to be
+    // total: it is handed whatever board the session holds.
+    //
+    // Black on a1, white on b2 and c3. Black's only move is d4, and it flips
+    // both white discs, which leaves a board with no white on it at all: no
+    // side can bracket anything, and 60 squares are still empty.
+    const board = emptyReversi();
+    setAt(board, 0, 0, "black");
+    setAt(board, 1, 1, "white");
+    setAt(board, 2, 2, "white");
+    expect(getValidReversiMoves(board, "black").map((c) => `${c.x},${c.y}`)).toEqual(["3,3"]);
+    expect(getValidReversiMoves(board, "white")).toHaveLength(0);
+
+    const result = applyReversiMove(board, { x: 3, y: 3 }, "black");
+    // Empty squares remain, and the game is still over.
+    expect(result.nextBoard.flat().filter((cell) => cell === null).length).toBeGreaterThan(0);
+    expect(getValidReversiMoves(result.nextBoard, "black")).toHaveLength(0);
+    expect(getValidReversiMoves(result.nextBoard, "white")).toHaveLength(0);
+    // Decided by count: four black discs, no white ones.
+    expect(result.winner).toBe("black");
+    expect(result.isDraw).toBe(false);
+    expect(result.nextTurnHasValidMoves).toBe(false);
+  });
+
+  it("keeps the turn when the opponent does have a reply", () => {
+    // The other side of the pass flag. A flag stuck at false would hand two
+    // turns to one player and skip the opponent's move entirely, and a flag
+    // stuck at true would make a pass that never happened.
+    const board = emptyReversi();
+    setAt(board, 1, 4, "black");
+    setAt(board, 2, 4, "white");
+    // A second black disc that a white move can bracket, so white can answer.
+    setAt(board, 0, 0, "black");
+    setAt(board, 1, 0, "white");
+    setAt(board, 2, 0, "black");
+    setAt(board, 0, 1, "white");
+
+    const result = applyReversiMove(board, { x: 3, y: 4 }, "black");
+    expect(result.nextTurnHasValidMoves).toBe(true);
+    expect(getValidReversiMoves(result.nextBoard, "white").length).toBeGreaterThan(0);
+    expect(result.winner).toBeNull();
   });
 
   it("decides the game by disc count when the board fills", () => {

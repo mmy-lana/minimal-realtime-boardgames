@@ -17,6 +17,7 @@ import {
   type GameSession,
   type MoveRecord,
   type PlayerColor,
+  type ReversiBoard,
   type UniversalBoard,
 } from "@/engine/types";
 import { SESSION_ENGINES, getSessionEngine, replayMoves } from "@/engine/factory";
@@ -429,6 +430,71 @@ describe("replayMoves", () => {
     expect(isDraw).toBe(false);
   });
 });
+
+describe("session engine: the Reversi pass", () => {
+  /**
+   * The only one of the six games where a player can be left with no move. The
+   * engine reports it as `passesTurn` rather than handing the turn over, and the
+   * session keeps the same seat. Two things have to hold at once: the move must
+   * not raise, and the mover must not lose the turn.
+   */
+  it("keeps the mover's turn when the opponent has nothing to play, without raising", () => {
+    const engine = getSessionEngine("reversi");
+    const state: ReversiBoard = Array.from({ length: 8 }, () => Array(8).fill(null));
+    // Black at b5 and a1, white at c5 and b1. Playing d5 flips c5, and that
+    // takes away the only move white had: its reply at a5 was only legal
+    // because black's stones at b5 and c5 ended on white's c5. Black still has
+    // a move of its own, so the game is not over — only the turn is.
+    state[4]![1] = "black";
+    state[4]![2] = "white";
+    state[0]![0] = "black";
+    state[0]![1] = "white";
+    const board: UniversalBoard = { kind: "reversi", state };
+
+    // Sanity: white can answer this one, so the pass below is a fact about the
+    // position that black creates rather than a flag left over from the last ply.
+    expect(engine.getLegalSquares(board, "white").map((c) => `${c.x},${c.y}`)).toEqual(["0,4"]);
+
+    const result = engine.applyMove(board, { to: { x: 3, y: 4 } }, "black");
+    // No throw, and the turn is the mover's to play again. Handing it over would
+    // leave white to move with no move, which is how a session ends up showing a
+    // board nobody can act on and no explanation for it.
+    expect(result.passesTurn).toBe(true);
+    expect(result.board).not.toBe(board);
+    expect(result.winner).toBeNull();
+    expect(result.isDraw).toBe(false);
+    // The flip landed, so the board advanced rather than quietly refusing, and
+    // the same seat still has a move of its own to make.
+    expect(engine.getLegalSquares(result.board, "black").map((c) => `${c.x},${c.y}`)).toEqual(["2,0"]);
+    expect(engine.getLegalSquares(result.board, "white")).toHaveLength(0);
+  });
+
+  it("reports a result when a pass leaves nobody able to move", () => {
+    const engine = getSessionEngine("reversi");
+    const board: UniversalBoard = { kind: "reversi", state: emptyReversiWithBlackAtOrigin() };
+
+    const result = engine.applyMove(board, { to: { x: 3, y: 3 } }, "black");
+    // Black flipped away the last two white discs, so nobody can move: the pass
+    // and the end of the game are the same fact, and the game is over on count
+    // rather than left hanging because the opponent had no move.
+    expect(result.passesTurn).toBe(true);
+    expect(result.winner).toBe("black");
+    expect(result.isDraw).toBe(false);
+  });
+});
+
+/**
+ * Black on a1 with white on b2 and c3: black's only move is d4, which flips both
+ * white discs away. Contrived, and documented as such in the engine test that
+ * covers the same position from the rules' side.
+ */
+function emptyReversiWithBlackAtOrigin(): ReversiBoard {
+  const state: ReversiBoard = Array.from({ length: 8 }, () => Array(8).fill(null));
+  state[0]![0] = "black";
+  state[1]![1] = "white";
+  state[2]![2] = "white";
+  return state;
+}
 
 describe("engine registry", () => {
   it("covers every game kind", () => {
