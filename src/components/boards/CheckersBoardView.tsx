@@ -52,15 +52,36 @@ function Checker({ piece }: { piece: CheckersPiece }): React.ReactElement {
         // White pieces are cream on a dark square, so the crown is ink; black
         // pieces are near-black on a dark square, so theirs is gold. Both stay
         // legible against the disc they sit on.
+        //
+        // The crown is drawn, not typed. It used to be a chess-king character,
+        // which names a *chess* piece rather than a checkers crown and is
+        // resolved by whichever font the device happens to have — a different
+        // mark per platform, or a colour-emoji piece on the ones that carry
+        // those. One path is the same mark everywhere and costs one node.
         <span
           className={cn(
-            "flex w-[68%] items-center justify-center rounded-full border-2 text-[min(3.2cqw,0.9rem)] leading-none",
+            "flex w-[68%] items-center justify-center rounded-full border-2",
             isBlack
               ? "border-amber-400/70 text-amber-300"
               : "border-amber-500/60 text-amber-700"
           )}
         >
-          ♔
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="size-[62%]">
+            <path
+              d="M3.5 16.5 5 8.5 9 11.5 12 5.5 15 11.5 19 8.5 20.5 16.5z"
+              fill="currentColor"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinejoin="round"
+            />
+            <path
+              d="M3.5 19.5h17"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2.5}
+              strokeLinecap="round"
+            />
+          </svg>
         </span>
       ) : (
         <span
