@@ -140,6 +140,10 @@ export function CheckersBoardView({
               shape="circle"
               disabled={disabled || !playable}
               selected={role === "selected"}
+              // An inset ring: it paints inside the square, so it cannot take a
+              // pixel from its neighbour and the checkerboard stays visible
+              // under the lifted piece.
+              selectedRingClass="ring-4 ring-inset ring-amber-400"
               isLegalTarget={target}
               isLastMove={isLastMove(lastMove, coord)}
               onClick={() => onSquareActivate(coord)}
@@ -150,10 +154,6 @@ export function CheckersBoardView({
                   : "bg-neutral-200",
                 "disabled:cursor-not-allowed",
                 lastMoveWash(role),
-                // Selection is an inset ring: it paints inside the square, so it
-                // cannot take a pixel from its neighbour, and it leaves the
-                // checkerboard visible under the lifted piece.
-                role === "selected" && "ring-4 ring-inset ring-amber-400",
                 role === "selectable" && !disabled && "hover:bg-neutral-600"
                 // No `after:` marker and no last-move ring here: BoardTile owns
                 // both, and a view painting its own leaves two competing sets

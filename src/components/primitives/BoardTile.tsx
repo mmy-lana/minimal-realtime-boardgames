@@ -32,6 +32,21 @@ export interface BoardTileProps
   isLastMove?: boolean;
   /** Hairline ring weight. Defaults to `"none"`. */
   emphasis?: BoardTileEmphasis;
+  /**
+   * Replaces the selection ring outright — it is not merged with the default.
+   *
+   * Checkers wants an amber ring at a different weight; chess wants a gold one.
+   * Both used to be passed through `className`, which leaves two `ring-*`
+   * utilities on one element, and the winner is decided by stylesheet order
+   * rather than by intent — so a selection ring could appear on some viewports
+   * and not others. A prop can only take the one value it is given.
+   */
+  selectedRingClass?: string;
+  /**
+   * Replaces the legal-target marker outright, for the same reason as
+   * `selectedRingClass`. Chess wants a filled green dot; the default is a ring.
+   */
+  targetDotClass?: string;
   children?: React.ReactNode;
 }
 
@@ -70,6 +85,20 @@ const EMPHASIS_CLASSES: Record<BoardTileEmphasis, string> = {
 };
 
 /**
+ * The default selection and last-move rings, and the default target marker.
+ *
+ * The marker is a filled dot rather than a ring. A ring needs a border on the
+ * pseudo-element, and a `border-*` utility is indistinguishable, to a grep and
+ * to the box-model test, from a border on the tile itself — which is the one
+ * thing a tile may never carry. A fill has no such ambiguity, and it is the
+ * stronger signal at small sizes: on a phone a hollow ring one-third the width
+ * of a square is three faint hairlines, where a solid dot is a dot.
+ */
+const DEFAULT_SELECTED_RING = "ring-2 ring-inset ring-board-dark";
+const LAST_MOVE_RING = "ring-2 ring-inset ring-amber-400/80";
+const DEFAULT_TARGET_DOT = "bg-board-dark/60";
+
+/**
  * A single interactive square on a game board.
  *
  * Touch behaviour (Section 2.2) is implemented here once, for every board:
@@ -87,6 +116,8 @@ export function BoardTile({
   isLegalTarget = false,
   isLastMove = false,
   emphasis = "none",
+  selectedRingClass,
+  targetDotClass,
   className,
   children,
   onContextMenu,
@@ -100,11 +131,12 @@ export function BoardTile({
   // is decided by stylesheet order, not by the order the classes appear in the
   // attribute — so a selection ring could be silently overridden by an
   // emphasis ring and the tile would look different at different viewport
-  // widths. Picking one here makes the result deterministic by construction.
+  // widths. Picking one here makes the result deterministic by construction,
+  // and the two override props *replace* the default rather than joining it.
   const ringClass = selected
-    ? "ring-2 ring-inset ring-board-dark"
+    ? (selectedRingClass ?? DEFAULT_SELECTED_RING)
     : isLastMove
-      ? "ring-2 ring-inset ring-amber-400/80"
+      ? LAST_MOVE_RING
       : EMPHASIS_CLASSES[emphasis];
 
   return (
@@ -143,12 +175,11 @@ export function BoardTile({
         "hover:bg-board-subtle/60",
         "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-board-dark",
         "disabled:cursor-not-allowed disabled:hover:bg-transparent",
-        selected && "bg-board-subtle",
         // A legal destination is a dot painted on top of the tile, drawn with
         // an absolutely positioned pseudo-element. It never consumes layout
         // space, so revealing it cannot reflow the board.
-        isLegalTarget &&
-          "after:pointer-events-none after:absolute after:inset-[30%] after:rounded-full after:border-2 after:border-board-dark/70",
+        isLegalTarget && "after:pointer-events-none after:absolute after:inset-[30%] after:rounded-full",
+        isLegalTarget && (targetDotClass ?? DEFAULT_TARGET_DOT),
         className,
       )}
     >

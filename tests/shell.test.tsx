@@ -588,6 +588,126 @@ describe("board sizing", () => {
     unmount();
   });
 
+  it("lays the chess labels out from the board's own tracks, not an offset", async () => {
+    // The file row used to be pulled into line with `ml-[21px]` — 16px of rank
+    // gutter, 4px of gap, 1px of half-border, as one remembered number. The
+    // assertion that matters is that no such offset exists any more, and that
+    // the board itself is the square the whole thing is measured against.
+    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
+    const engine = getSessionEngine("chess");
+    const { container, unmount } = render(
+      <ChessBoardView
+        board={engine.createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Chess board"
+        size="sm"
+      />
+    );
+
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain("max-w-[min(92vw,580px)]");
+    // No magic pixel offset survives anywhere in the view.
+    expect(root.className).not.toMatch(/ml-\[\d+px\]/);
+    expect(root.style.marginLeft).toBe("");
+
+    const grid = container.querySelector('[role="grid"]') as HTMLElement;
+    expect(grid.style.aspectRatio).toBe("1 / 1");
+
+    // Ranks 1–8 and files a–h, each exactly once, in the flipped order: 8
+    // along the top from Black's side, a at the left from White's.
+    const text = [...container.querySelectorAll("span")].map((n) => n.textContent);
+    expect(text.filter((t) => /^[1-8]$/.test(t ?? ""))).toEqual(["8", "7", "6", "5", "4", "3", "2", "1"]);
+    expect(text.filter((t) => /^[a-h]$/.test(t ?? ""))).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
+
+    // The file row, the rank gutter and the board each split into eight even
+    // tracks, so every label is pinned to one square by the layout itself
+    // rather than by arithmetic anyone has to remember to redo.
+    const evenTracks = container.querySelectorAll('[style*="repeat(8, minmax(0, 1fr))"]');
+    expect(evenTracks.length).toBe(3);
+    unmount();
+  });
+
+  it("shows chess destinations as green dots and selection as a gold ring", async () => {
+    // A dot inside a destination and a glow around a selection are different
+    // signals for different things, so they must be told apart by shape and
+    // colour, not by a shade of the same green.
+    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
+    const engine = getSessionEngine("chess");
+    const origin = [...engine.getSelectableSquares(engine.createInitialBoard(), "white")][0]!;
+
+    const { container, unmount } = render(
+      <ChessBoardView
+        board={engine.createInitialBoard()}
+        selected={new Set([`${origin.x},${origin.y}`])}
+        legalSquares={new Set([`${origin.x},${origin.y + 1}`])}
+        selectableSquares={new Set([`${origin.x},${origin.y}`])}
+        destinations={new Set([`${origin.x},${origin.y + 1}`])}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Chess board"
+        size="sm"
+      />
+    );
+
+    const target = container.querySelector('[data-square="legal"]');
+    expect(target).not.toBeNull();
+    // The dot is an absolutely positioned pseudo-element: no layout space, so
+    // showing a destination cannot nudge a neighbouring square.
+    expect((target as HTMLElement).className).toContain("after:absolute");
+    expect(container.querySelector('[class*="bg-emerald-600/80"]')).not.toBeNull();
+
+    const selected = container.querySelector('[aria-pressed="true"]') as HTMLElement;
+    expect(selected.className).toMatch(/ring-2/);
+    expect(selected.className).toMatch(/ring-inset/);
+    expect(selected.className).toMatch(/amber/);
+    unmount();
+  });
+
+  it("gives a chess piece a shadow that separates it from the square under it", async () => {
+    // White and black pieces are told apart by the contrast against the square
+    // they happen to be standing on, which alternates every file. Each side
+    // therefore needs a shadow in the *opposite* direction: black drops white.
+    const { ChessBoardView } = await import("@/components/boards/ChessBoardView");
+    const { container, unmount } = render(
+      <ChessBoardView
+        board={getSessionEngine("chess").createInitialBoard()}
+        selected={new Set<string>()}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Chess board"
+        size="sm"
+      />
+    );
+
+    // `"♔♕…".includes("")` is true, so an empty span would match the glyph set
+    // and be counted as a thirty-third piece.
+    const glyphs = [...container.querySelectorAll("span[aria-hidden='true']")].filter(
+      (n) => (n.textContent ?? "").length === 1 && "♔♕♖♗♘♙♚♛♜♝♞♟".includes(n.textContent as string)
+    );
+    expect(glyphs.length).toBe(32);
+    const white = glyphs.filter((n) => n.className.includes("text-white"));
+    const black = glyphs.filter((n) => n.className.includes("text-neutral-950"));
+    expect(white.length).toBe(16);
+    expect(black.length).toBe(16);
+    expect(white[0]!.className).toContain("rgba(0,0,0,0.8)");
+    expect(black[0]!.className).toContain("rgba(255,255,255,0.8)");
+    // Tournament wood, not a yellow board.
+    expect(container.querySelector('[class*="#F0D9B5"]')).not.toBeNull();
+    expect(container.querySelector('[class*="#B58863"]')).not.toBeNull();
+    unmount();
+  });
+
   it("gives Connect Four an exact 7:6 playfield with square cells", async () => {
     const { ConnectFourBoardView } = await import("@/components/boards/ConnectFourBoardView");
     const { container, unmount } = render(
