@@ -198,7 +198,11 @@ export function GameScreen({
       void (async () => {
         const result: MakeMoveOutcome = await makeMove(coord);
         if (result.accepted) play(result.cue ?? "move");
-        else playCue("invalid");
+        else if (result.reason !== null) playCue("invalid");
+        // A no-op — a bare tap in a movement game that was never a move
+        // attempt — says nothing, and so sounds like nothing. Beeping
+        // "invalid" at a player who merely touched the board is the same
+        // mistake as the banner it replaced, in audio.
       })();
     },
     [canAct, makeMove, play]

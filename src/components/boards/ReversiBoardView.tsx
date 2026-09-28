@@ -103,7 +103,9 @@ export function ReversiBoardView({
                 "disabled:hover:bg-emerald-800",
                 lastMoveWash(role),
                 selected && "bg-emerald-600",
-                isLastMove(lastMove, coord) && "ring-2 ring-amber-400",
+                // No last-move ring here: BoardTile already draws one, and two
+                // `ring-*` utilities on an element are a conflict resolved by
+                // stylesheet order rather than by intent.
                 target && "bg-emerald-600"
               )}
             >

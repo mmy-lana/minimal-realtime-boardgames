@@ -552,6 +552,42 @@ describe("board sizing", () => {
     unmount();
   });
 
+  it("marks a lifted checker with an inset ring, not a repainted square", async () => {
+    const { CheckersBoardView } = await import("@/components/boards/CheckersBoardView");
+    const engine = getSessionEngine("checkers");
+    const origin = [...engine.getSelectableSquares(engine.createInitialBoard(), "black")][0]!;
+    const originKey = `${origin.x},${origin.y}`;
+
+    const { container, unmount } = render(
+      <CheckersBoardView
+        board={engine.createInitialBoard()}
+        selected={new Set([originKey])}
+        legalSquares={new Set<string>()}
+        selectableSquares={new Set<string>()}
+        destinations={new Set<string>()}
+        lastMove={null}
+        disabled={false}
+        onSquareActivate={() => {}}
+        label="Checkers board"
+        size="sm"
+      />
+    );
+
+    const board = container.querySelector('[role="grid"]') as HTMLElement;
+    expect(board.style.aspectRatio).toBe("1 / 1");
+    expect(board.className).toContain("max-w-[min(92vw,560px)]");
+
+    const lifted = container.querySelector(`[aria-label*="${originKey}"], [aria-pressed="true"]`);
+    expect(lifted).not.toBeNull();
+    const liftedClass = (lifted as HTMLElement).className;
+    // An inset ring paints inside the square, so it cannot take a pixel from a
+    // neighbour and the checkerboard stays visible under the lifted piece.
+    expect(liftedClass).toMatch(/ring-4/);
+    expect(liftedClass).toMatch(/ring-inset/);
+    expect(liftedClass).not.toMatch(/border-2(?![-\d])/);
+    unmount();
+  });
+
   it("gives Connect Four an exact 7:6 playfield with square cells", async () => {
     const { ConnectFourBoardView } = await import("@/components/boards/ConnectFourBoardView");
     const { container, unmount } = render(

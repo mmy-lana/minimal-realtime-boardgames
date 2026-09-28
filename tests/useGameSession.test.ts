@@ -358,19 +358,67 @@ describe("useGameSession on a two-step game", () => {
     expect(result.current.session?.history).toHaveLength(0);
   });
 
-  it("still refuses a genuinely illegal move", async () => {
-    // The cases above must not have swallowed real errors: tapping a square
-    // that holds nothing of yours, with nothing lifted, is still not a move.
+  it("silently ignores a bare tap in a movement game, with nothing to show for it", async () => {
+    // In checkers and chess there is no such thing as "put a piece down here".
+    // A tap on a square the player does not own, with nothing lifted, was never
+    // a move attempt — it was someone touching the board. Handing it to the
+    // engine produced "an origin square is required": a complaint about a
+    // protocol detail, in response to a gesture that deserved no response.
     const engine = getSessionEngine("checkers");
     const initial = localSession({ gameKind: "checkers", boardSnapshot: engine.createInitialBoard() });
     const { result } = renderHook(() => useGameSession(initial));
 
+    const outcome = await act(async () => result.current.makeMove({ x: 7, y: 7 }));
+
+    expect(result.current.session?.history).toHaveLength(0);
+    expect(result.current.rejection).toBeNull();
+    expect(result.current.rejectionMessage).toBeNull();
+    expect(result.current.selected).toBeNull();
+    expect(outcome).toEqual({ accepted: false, reason: null, message: undefined });
+  });
+
+  it("never tells the player that an origin square is required", async () => {
+    // Stated as a sweep because the message is the defect: it names a field in
+    // a move payload. Whichever way the intent resolver is rewritten, no tap in
+    // either movement game may surface it.
+    for (const gameKind of ["checkers", "chess"] as const) {
+      const engine = getSessionEngine(gameKind);
+      const initial = localSession({ gameKind, boardSnapshot: engine.createInitialBoard() });
+      const { result } = renderHook(() => useGameSession(initial));
+
+      // Every square on the board, one at a time, with nothing lifted.
+      for (let y = 0; y < 8; y += 1) {
+        for (let x = 0; x < 8; x += 1) {
+          await act(async () => {
+            await result.current.makeMove({ x, y });
+          });
+          expect(
+            result.current.rejectionMessage ?? "",
+            `${gameKind} (${x},${y}) must not explain protocol internals`
+          ).not.toContain("origin square");
+        }
+      }
+    }
+  });
+
+  it("still refuses a genuinely illegal move in a placement game", async () => {
+    // The silent-ignore rule must not have swallowed real errors. A placement
+    // game has no origin to pick, so tapping a square the rules forbid *is* an
+    // illegal move and the player deserves to be told so.
+    const engine = getSessionEngine("tictactoe");
+    const afterX = engine.applyMove(engine.createInitialBoard(), { to: { x: 0, y: 0 } }, "black");
+    const board = engine.applyMove(afterX.board, { to: { x: 1, y: 1 } }, "white").board;
+    const initial = localSession({ gameKind: "tictactoe", boardSnapshot: board });
+    const { result } = renderHook(() => useGameSession(initial));
+
+    // (0,0) holds a black mark; placing there is a real illegal move.
     await act(async () => {
-      await result.current.makeMove({ x: 7, y: 7 });
+      await result.current.makeMove({ x: 0, y: 0 });
     });
 
     expect(result.current.session?.history).toHaveLength(0);
     expect(result.current.rejection).not.toBeNull();
+    expect(result.current.rejectionMessage).toBeTruthy();
   });
 
   it("plays Reversi in one click, because the engine supplies destinations", async () => {

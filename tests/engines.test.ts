@@ -831,6 +831,92 @@ describe("checkers engine", () => {
     expect(result.nextBoard[2]![2]).toBeNull();
   });
 
+  it("removes exactly one piece on every jump it is given", () => {
+    // The rule under test, stated as a count rather than as a coordinate: a
+    // jump captures one piece and no other, and the total on the board drops by
+    // exactly one. Asserting on a single hand-built position only proves the
+    // case someone thought of, so this sweeps every jump the generator offers
+    // on the opening board and on a set of random-ish middlegame ones.
+    const countPieces = (board: ReturnType<typeof emptyCheckers>): number =>
+      board.flat().filter((cell) => cell !== null).length;
+
+    const positions: ReturnType<typeof emptyCheckers>[] = [
+      createInitialCheckersBoard(),
+      // Middlegames built by *placing* jumps rather than by scattering pieces
+      // at random: a mover, an adjacent enemy, and a clear landing square. A
+      // random 8-piece board almost never contains a jump, which would make the
+      // assertions below pass without ever running.
+      ...Array.from({ length: 12 }, (_, n) => {
+        const board = emptyCheckers();
+        // A small deterministic LCG, masked back to 32 bits each step. The
+        // obvious `seed * 1103515245` overflows a JS float, loses its integer
+        // value, and yields NaN — which silently makes every generated
+        // position empty.
+        let seed = ((n + 1) * 2654435761) >>> 0;
+        const next = (): number => {
+          seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+          return seed;
+        };
+        // A few independent jump opportunities per board, so each position
+        // exercises several captures rather than one.
+        for (let i = 0; i < 3; i += 1) {
+          const x = next() % (CHECKERS_SIZE - 2);
+          const y = next() % (CHECKERS_SIZE - 2);
+          const player = i % 2 === 0 ? "black" : "white";
+          // Black moves toward y+1, white toward y-1.
+          const dy = player === "black" ? 1 : -1;
+          if (!isPlayableSquare(x, y)) continue;
+          if (!isPlayableSquare(x + 1, y + dy) || !isPlayableSquare(x + 2, y + dy * 2)) continue;
+          board[y]![x] = { color: player, type: i === 0 ? "king" : "pawn" };
+          board[y + dy]![x + 1] = { color: player === "black" ? "white" : "black", type: "pawn" };
+        }
+        return board;
+      }),
+    ];
+
+    let jumpsChecked = 0;
+    for (const board of positions) {
+      for (const player of ["black", "white"] as const) {
+        for (const move of getCheckersLegalMoves(board, player)) {
+          // Only jumps are in scope for this rule.
+          if (!move.jumpedCoord) continue;
+          const before = countPieces(board);
+          const result = applyCheckersMove(board, move, player);
+          expect(countPieces(result.nextBoard), `jump ${JSON.stringify(move)} by ${player}`).toBe(
+            before - 1
+          );
+          // The captured square is empty, and nothing else changed.
+          expect(result.nextBoard[move.jumpedCoord.y]![move.jumpedCoord.x]).toBeNull();
+          expect(result.nextBoard[move.from.y]![move.from.x]).toBeNull();
+
+          // The replay path — the one a reconnecting client takes, where the
+          // wire sent only the two endpoints — must capture identically.
+          const replayed = applyCheckersMove(
+            board,
+            { from: move.from, to: move.to },
+            player
+          );
+          expect(replayed.nextBoard).toEqual(result.nextBoard);
+          jumpsChecked += 1;
+        }
+      }
+    }
+    // Guard the guard: if the generator stopped producing jumps the assertions
+    // above would pass vacuously.
+    expect(jumpsChecked).toBeGreaterThan(20);
+  });
+
+  it("leaves the piece count alone on a quiet move", () => {
+    const board = emptyCheckers();
+    board[2]![1] = { color: "black", type: "pawn" };
+    const move = getCheckersLegalMoves(board, "black").find((m) => !m.jumpedCoord);
+    expect(move).toBeDefined();
+    const result = applyCheckersMove(board, move!, "black");
+    const countPieces = (b: ReturnType<typeof emptyCheckers>): number =>
+      b.flat().filter((cell) => cell !== null).length;
+    expect(countPieces(result.nextBoard)).toBe(countPieces(board));
+  });
+
   it("moves men forward only and kings in all four directions", () => {
     const manBoard = emptyCheckers();
     manBoard[3]![0] = { color: "black", type: "pawn" };

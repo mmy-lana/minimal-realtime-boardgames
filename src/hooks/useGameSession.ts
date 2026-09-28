@@ -60,8 +60,15 @@ export type MoveRejection =
 export interface MakeMoveOutcome {
   readonly accepted: boolean;
   readonly reason: MoveRejection | null;
-  /** Human-readable text for the status line, always present. */
-  readonly message: string;
+  /**
+   * Human-readable text for the status line.
+   *
+   * Absent for a no-op — a tap in a movement game that was never a move
+   * attempt. There is nothing to say about a player touching the board, and
+   * `reason: null` with no message is how a caller tells that case apart from
+   * a genuine rejection.
+   */
+  readonly message?: string;
   /** Set when the move ended the match. */
   readonly cue?: SoundCue;
 }
@@ -362,7 +369,21 @@ export function useGameSession(
         };
       }
 
-      // Past the early return `intent` is the one shape left: a real move,
+      if (intent.kind === "noop") {
+        // A tap that was never a move attempt: a movement game, a square the
+        // player does not own, and nothing lifted. Drop any selection, raise
+        // no banner, and let the board sit still. Handing this to the engine
+        // instead produced "an origin square is required" — a complaint about
+        // an internal protocol detail, in response to a player who had simply
+        // touched the board.
+        setSelected(null);
+        selectedRef.current = null;
+        setRejection(null);
+        setRejectionMessage(null);
+        return { accepted: false, reason: null, message: undefined };
+      }
+
+      // Past the early returns `intent` is the one shape left: a real move,
       // carrying the origin only when the player picked a piece up first.
       const move: NormalizedMove = { to: coord, ...(intent.from ? { from: intent.from } : {}) };
 
@@ -588,13 +609,14 @@ export function useGameSession(
 /**
  * What a bare click on a square means.
  *
- * `select` and `deselect` are not moves and never reach the engine; `move` is
- * the only outcome the engine ever sees from a bare click.
+ * `select`, `deselect` and `noop` are not moves and never reach the engine;
+ * `move` is the only outcome the engine ever sees from a bare click.
  */
 type ClickIntent =
   | { readonly kind: "move"; readonly from: Coordinates | null }
   | { readonly kind: "select"; readonly coord: Coordinates }
-  | { readonly kind: "deselect" };
+  | { readonly kind: "deselect" }
+  | { readonly kind: "noop" };
 
 /**
  * Decides whether a bare click picks up a piece, puts one down, or moves one.
@@ -611,10 +633,18 @@ type ClickIntent =
  *     the selection is dropped. Clicking empty space to put a piece down is
  *     how every one of these games is played, and treating it as an illegal
  *     move was the "an origin square is required" banner.
- *  4. Otherwise there is nothing to do. For a placement game this is an empty
- *     square with no legal move; for a movement game it is a square holding
- *     something the player does not own. Both are the engine's answer, not an
- *     error the session layer invents.
+ *  4. For a **movement game**, a tap with nothing lifted on a square the player
+ *     does not own is a no-op. There is no such thing as "put a piece down
+ *     here" in checkers or chess, so the tap was not a move attempt at all —
+ *     it was someone touching the board. Handing it to the engine anyway
+ *     produced the single most confusing message in the app: *"an origin
+ *     square is required"*, which describes a protocol detail and tells the
+ *     player nothing about what to do next. Silently dropping the selection
+ *     costs the player nothing they asked for, and removes the message
+ *     entirely.
+ *  5. For a **placement game** the same tap really is an illegal move — the
+ *     square is taken, or it is one the rules forbid. There is no origin to
+ *     pick, so the engine's rejection is a genuine answer and is shown.
  */
 function resolveClickIntent(
   engine: SessionEngine,
@@ -635,6 +665,7 @@ function resolveClickIntent(
   }
 
   if (selected) return { kind: "deselect" };
+  if (engine.usesOriginSquare) return { kind: "noop" };
   return { kind: "move", from: null };
 }
 

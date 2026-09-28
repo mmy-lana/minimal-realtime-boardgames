@@ -8,9 +8,17 @@
  * being left blank, so the board reads as a checkerboard at a glance and the
  * piece count is legible at a glance.
  *
- * A king is a double disc, the standard draughts convention, which is a shape
- * difference rather than a colour one — a player who cannot separate the two
- * colours can still tell a king from a pawn.
+ * **Kings are marked by a crown, not by a ring.** A king used to be a disc with
+ * a dashed inner ring and a man a disc with a solid pip — the same shape at two
+ * opacities, which is a distinction that disappears under a glare, a projector,
+ * or a tired eye at the end of a long game. A crown is a different shape, and
+ * draughts players have read them at a glance for two centuries. The pip stays,
+ * so the man keeps its centre of visual weight.
+ *
+ * Selection is an inset ring, not a fill. Changing a tile's background is fine
+ * (it is a paint operation, not a layout one), but the earlier treatment also
+ * swapped the square for a solid emerald block, which erased the checkerboard
+ * under the piece and made it briefly unclear where the piece had been.
  */
 
 import { useMemo } from "react";
@@ -36,21 +44,32 @@ function Checker({ piece }: { piece: CheckersPiece }): React.ReactElement {
         "relative flex w-full items-center justify-center rounded-full border-2 shadow-md",
         isBlack
           ? "border-neutral-600 bg-neutral-900"
-          : "border-neutral-300 bg-neutral-50"
+          : "border-amber-300 bg-amber-50"
       )}
       style={{ aspectRatio: "1 / 1" }}
     >
-      {/* A king carries an inner ring; a man carries a centre pip. The two
-          differ by shape, so the distinction survives a monochrome display. */}
-      <span
-        className={cn(
-          "block rounded-full",
-          isKing
-            ? "w-[62%] border-2 border-dashed border-current"
-            : "size-[30%]",
-          isBlack ? "bg-neutral-700 text-neutral-300" : "bg-neutral-300 text-neutral-500"
-        )}
-      />
+      {isKing ? (
+        // White pieces are cream on a dark square, so the crown is ink; black
+        // pieces are near-black on a dark square, so theirs is gold. Both stay
+        // legible against the disc they sit on.
+        <span
+          className={cn(
+            "flex w-[68%] items-center justify-center rounded-full border-2 text-[min(3.2cqw,0.9rem)] leading-none",
+            isBlack
+              ? "border-amber-400/70 text-amber-300"
+              : "border-amber-500/60 text-amber-700"
+          )}
+        >
+          ♔
+        </span>
+      ) : (
+        <span
+          className={cn(
+            "block size-[30%] rounded-full",
+            isBlack ? "bg-neutral-600" : "bg-amber-300"
+          )}
+        />
+      )}
     </span>
   );
 }
@@ -80,7 +99,7 @@ export function CheckersBoardView({
         );
       }
     }
-    return map
+    return map;
   }, [selected, legalSquares, selectableSquares, destinations, lastMove]);
 
   return (
@@ -90,13 +109,17 @@ export function CheckersBoardView({
       aria-rowcount={CHECKERS_SIZE}
       aria-colcount={CHECKERS_SIZE}
       aria-disabled={disabled || undefined}
-      className="grid w-full gap-0.5 rounded-lg border-2 border-neutral-800 p-0.5"
+      className="grid w-full max-w-[min(92vw,560px)] gap-0.5 rounded-lg border-2 border-neutral-800 p-0.5"
       style={{
+        aspectRatio: "1 / 1",
         gridTemplateColumns: `repeat(${CHECKERS_SIZE}, minmax(0, 1fr))`,
         // The playable squares are dark slate and the off-play squares are
         // light slate, so the checkerboard survives even before a piece lands
         // on it. The two used to be the same near-white as the page.
         backgroundColor: "var(--color-neutral-800)",
+        // Contained units so the crown glyph can size itself against the board
+        // rather than against the viewport.
+        containerType: "inline-size",
       }}
     >
       {state.map((row, y) =>
@@ -121,18 +144,20 @@ export function CheckersBoardView({
               isLastMove={isLastMove(lastMove, coord)}
               onClick={() => onSquareActivate(coord)}
               className={cn(
-                "rounded-sm border-0 p-[9%]",
+                "rounded-sm p-[9%]",
                 playable
                   ? "bg-neutral-800 hover:bg-neutral-700 disabled:hover:bg-neutral-800"
                   : "bg-neutral-200",
                 "disabled:cursor-not-allowed",
                 lastMoveWash(role),
-                role === "selected" && "bg-emerald-700",
-                role === "selectable" && !disabled && "hover:bg-neutral-600",
-                isLastMove(lastMove, coord) && "ring-2 ring-amber-400",
-                target &&
-                  playable &&
-                  "after:pointer-events-none after:absolute after:inset-[24%] after:rounded-full after:border-2 after:border-emerald-400"
+                // Selection is an inset ring: it paints inside the square, so it
+                // cannot take a pixel from its neighbour, and it leaves the
+                // checkerboard visible under the lifted piece.
+                role === "selected" && "ring-4 ring-inset ring-amber-400",
+                role === "selectable" && !disabled && "hover:bg-neutral-600"
+                // No `after:` marker and no last-move ring here: BoardTile owns
+                // both, and a view painting its own leaves two competing sets
+                // of utilities on one element.
               )}
             >
               {cell ? (
@@ -140,7 +165,7 @@ export function CheckersBoardView({
               ) : target && !disabled && playable ? (
                 <span
                   aria-hidden="true"
-                  className="block w-full animate-pulse rounded-full border-2 border-dashed border-emerald-300"
+                  className="block w-full animate-pulse rounded-full border-2 border-dashed border-amber-300"
                   style={{ aspectRatio: "1 / 1" }}
                 />
               ) : null}
