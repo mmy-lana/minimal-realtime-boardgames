@@ -62,10 +62,19 @@ function fillRandomBytes(target: Uint8Array): Uint8Array {
     cryptoRef.getRandomValues(target);
     return target;
   }
-  for (let i = 0; i < target.length; i += 1) {
-    target[i] = Math.floor(Math.random() * 256);
+
+  // Node.js crypto fallback when globalThis.crypto is not exposed
+  try {
+    const nodeCrypto = require("crypto") as { randomFillSync?: (buf: Uint8Array) => void };
+    if (typeof nodeCrypto.randomFillSync === "function") {
+      nodeCrypto.randomFillSync(target);
+      return target;
+    }
+  } catch {
+    // Fall through to strict error
   }
-  return target;
+
+  throw new Error("A cryptographically secure random number generator is required but unavailable.");
 }
 
 function toHex(bytes: Uint8Array): string {
